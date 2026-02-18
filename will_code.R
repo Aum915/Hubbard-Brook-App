@@ -84,9 +84,33 @@ precip |>
   scale_y_continuous(limits = c(0, .15))
 
 
+########## WIND DATA READ IN ##########
 
+k <- "Kineo_Tower_Kineo-Aum.dat"
 
+wind <- read.table(
+  k,
+  sep = ",",
+  header = TRUE,
+  skip = 1,      # Skip only first metadata line
+  fill = TRUE,
+  stringsAsFactors = FALSE,
+  quote = "\""
+)
 
+names(wind) <- gsub('"', "", names(wind))
+names(wind) <- trimws(names(wind))
+
+wind$datetime <- suppressWarnings(ymd_hms(wind$TIMESTAMP))
+
+wind <- wind |>
+  mutate(
+    datetime = ymd_hms(TIMESTAMP),
+    across(c(WS_ms_Avg, WS_ms_Max, WindDir), as.numeric)
+  ) |>
+  filter(!is.na(datetime))
+
+str(wind)
 
 
 ######## APP TEST
@@ -116,7 +140,10 @@ ui <- fluidPage(
       checkboxGroupInput(
         inputId = "variable_select",
         label = "Select Variable:",
-        choices = c("Streamflow" = "pressure1_Q"),
+        choices = c("Streamflow" = "pressure1_Q",
+                    "Wind Speed Avg" = "WS_ms_Avg",
+                    "Wind Speed Max" = "WS_ms_Max",
+                    "Wind Direction" = "WindDir"),
         selected = "pressure1_Q"
       )
       
@@ -149,82 +176,142 @@ server <- function(input, output, session) {
              datetime <= input$date_range[2])
   })
   
+  wind_filtered <- reactive({
+    req(input$date_range)
+    
+    wind %>%
+      filter(datetime >= input$date_range[1],
+             datetime <= input$date_range[2])
+  })
   
   # ---- Dynamic Layout ----
   
   output$dynamic_plots <- renderUI({
-    
     aspects <- input$aspect_select
     
-    # Both selected → side by side
     if (length(aspects) == 2) {
-      
+      # Two columns for each aspect
       fluidRow(
-        column(6, plotOutput("north_plot")),
-        column(6, plotOutput("south_plot"))
-      )
-      
-    } 
-    # One selected → full width
-    else if (length(aspects) == 1) {
-      
-      fluidRow(
-        column(12,
-               if ("north" %in% aspects) {
-                 plotOutput("north_plot")
-               } else {
-                 plotOutput("south_plot")
-               }
+        column(6,
+               plotOutput("streamflow_plot_north"),
+               plotOutput("wind_speed_plot_north"),
+               plotOutput("wind_dir_plot_north")
+        ),
+        column(6,
+               plotOutput("streamflow_plot_south"),
+               plotOutput("wind_speed_plot_south"),
+               plotOutput("wind_dir_plot_south")
         )
       )
-      
+    } else if (length(aspects) == 1) {
+      if ("north" %in% aspects) {
+        fluidRow(
+          column(12,
+                 plotOutput("streamflow_plot_north"),
+                 plotOutput("wind_speed_plot_north"),
+                 plotOutput("wind_dir_plot_north")
+          )
+        )
+      } else {
+        fluidRow(
+          column(12,
+                 plotOutput("streamflow_plot_south"),
+                 plotOutput("wind_speed_plot_south"),
+                 plotOutput("wind_dir_plot_south")
+          )
+        )
+      }
     }
   })
   
   
   # ---- North Plot ----
   
-  output$north_plot <- renderPlot({
+  output$streamflow_plot_north <- renderPlot({
+    if (!"pressure1_Q" %in% input$variable_select) return(NULL)
     
-    req("north" %in% input$aspect_select)
-    req("pressure1_Q" %in% input$variable_select)
-    
-    ggplot(north_filtered(),
-           aes(x = datetime, y = pressure1_Q)) +
+    ggplot(north_filtered(), aes(datetime, pressure1_Q)) +
       geom_line(color = "blue") +
-      labs(
-        title = "North Aspect Streamflow",
-        x = "Date",
-        y = "Streamflow"
-      ) +
+      labs(title = "North Aspect Streamflow", x = "Date", y = "Streamflow") +
       theme_classic()
   })
   
   
   # ---- South Plot ----
   
-  output$south_plot <- renderPlot({
+  output$streamflow_plot_south <- renderPlot({
+    if (!"pressure1_Q" %in% input$variable_select) return(NULL)
     
-    req("south" %in% input$aspect_select)
-    req("pressure1_Q" %in% input$variable_select)
-    
-    ggplot(south_filtered(),
-           aes(x = datetime, y = pressure1_Q)) +
+    ggplot(south_filtered(), aes(datetime, pressure1_Q)) +
       geom_line(color = "blue") +
-      labs(
-        title = "South Aspect Streamflow",
-        x = "Date",
-        y = "Streamflow"
-      ) +
+      labs(title = "South Aspect Streamflow", x = "Date", y = "Streamflow") +
       theme_classic()
   })
+  
+  # ---- North & South Wind Speed Avg & Max Plot ----
+  output$wind_speed_plot_north <- renderPlot({
+    if (!any(c("WS_ms_Avg", "WS_ms_Max") %in% input$variable_select)) return(NULL)
+    
+    p <- ggplot(wind_filtered(), aes(datetime)) +
+      theme_classic() +
+      labs(title = "North Aspect Wind Speed", x = "Date", y = "Wind Speed (m/s)", color = "Legend")
+    
+    if ("WS_ms_Avg" %in% input$variable_select) {
+      p <- p + geom_line(aes(y = WS_ms_Avg, color = "Avg"))
+    }
+    if ("WS_ms_Max" %in% input$variable_select) {
+      p <- p + geom_line(aes(y = WS_ms_Max, color = "Max"))
+    }
+    
+    p + scale_color_manual(values = c("Avg" = "darkgreen", "Max" = "red"))
+  })
+  
+output$wind_speed_plot_south <- renderPlot({
+  if (!any(c("WS_ms_Avg", "WS_ms_Max") %in% input$variable_select)) return(NULL)
+  
+  p <- ggplot(wind_filtered(), aes(datetime)) +
+    theme_classic() +
+    labs(title = "South Aspect Wind Speed", x = "Date", y = "Wind Speed (m/s)", color = "Legend")
+  
+  if ("WS_ms_Avg" %in% input$variable_select) {
+    p <- p + geom_line(aes(y = WS_ms_Avg, color = "Avg"))
+  }
+  if ("WS_ms_Max" %in% input$variable_select) {
+    p <- p + geom_line(aes(y = WS_ms_Max, color = "Max"))
+  }
+  
+  p + scale_color_manual(values = c("Avg" = "darkgreen", "Max" = "red"))
+})
+
+  # ---- North & South Wind Direction Plot ----
+output$wind_dir_plot_north <- renderPlot({
+  if (!"WindDir" %in% input$variable_select) return(NULL)
+  
+  ggplot(wind_filtered(), aes(datetime, WindDir)) +
+    geom_line(color = "purple") +
+    scale_y_continuous(
+      name = "Wind Direction",
+      breaks = seq(0, 360, by = 45),
+      labels = c("N", "NE", "E", "SE", "S", "SW", "W", "NW", "N")
+    ) +
+    labs(title = "North Aspect Wind Direction", x = "Date") +
+    theme_classic()
+})
+  
+output$wind_dir_plot_south <- renderPlot({
+  if (!"WindDir" %in% input$variable_select) return(NULL)
+  
+  ggplot(wind_filtered(), aes(datetime, WindDir)) +
+    geom_line(color = "purple") +
+    scale_y_continuous(
+      name = "Wind Direction",
+      breaks = seq(0, 360, by = 45),
+      labels = c("N", "NE", "E", "SE", "S", "SW", "W", "NW", "N")
+    ) +
+    labs(title = "South Aspect Wind Direction", x = "Date") +
+    theme_classic()
+})
   
 }
 
 shinyApp(ui = ui, server = server)
-
-
-
-
-
-
