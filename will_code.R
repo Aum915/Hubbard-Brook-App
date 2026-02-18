@@ -1,9 +1,6 @@
-
-
 library(tidyverse)
 library(lubridate)
 library(shiny)
-
 
 
 ######## NORTH ASPECT STREAM FLOW READ IN ##############
@@ -22,11 +19,11 @@ streamflowNorth <- read.table(
   col.names = col_names,
   fill = TRUE,
   stringsAsFactors = FALSE,
-  quote = "\""
-) |>
+  quote = "\"") |>
   select(TIMESTAMP, pressure1_Q) |>
   mutate(datetime = ymd_hms(TIMESTAMP)) |>
   filter(year(datetime) > 2025)
+
 
 ########### SOUTH ASPECT STREAM FLOW READ IN #########################
 
@@ -44,8 +41,7 @@ streamflowSouth <- read.table(
   col.names = col_names,
   fill = TRUE,
   stringsAsFactors = FALSE,
-  quote = "\""
-) |>
+  quote = "\"") |>
   select(TIMESTAMP, pressure1_Q) |>
   mutate(datetime = ymd_hms(TIMESTAMP)) |>
   filter(year(datetime) > 2025)
@@ -67,8 +63,7 @@ precip <- read.table(
   col.names = col_names,
   fill = TRUE,
   stringsAsFactors = FALSE,
-  quote = "\""
-) |>
+  quote = "\"") |>
   select(TIMESTAMP, ReportPCP) |>
   mutate(datetime = ymd_hms(TIMESTAMP)) |>
   filter(year(datetime) >= 2023)  ## Static file only goes to 2024
@@ -102,8 +97,6 @@ wind$datetime <- suppressWarnings(ymd_hms(wind$TIMESTAMP))
 wind <- wind |>
   mutate(datetime = ymd_hms(TIMESTAMP), across(c(WS_ms_Avg, WS_ms_Max, WindDir), as.numeric)) |>
   filter(!is.na(datetime))
-
-str(wind)
 
 
 ######## APP TEST
@@ -171,6 +164,7 @@ server <- function(input, output, session) {
              datetime <= input$date_range[2])
   })
   
+  
   # ---- Dynamic Layout ----
   
   output$dynamic_plots <- renderUI({
@@ -192,7 +186,9 @@ server <- function(input, output, session) {
           plotOutput("wind_dir_plot_south")
         )
       )
-    } else if (length(aspects) == 1) {
+    } 
+    
+    else if (length(aspects) == 1) {
       if ("north" %in% aspects) {
         fluidRow(column(
           12,
@@ -200,7 +196,9 @@ server <- function(input, output, session) {
           plotOutput("wind_speed_plot_north"),
           plotOutput("wind_dir_plot_north")
         ))
-      } else {
+      } 
+      
+      else {
         fluidRow(column(
           12,
           plotOutput("streamflow_plot_south"),
@@ -212,7 +210,7 @@ server <- function(input, output, session) {
   })
   
   
-  # ---- North Plot ----
+  # ---- North Streamflow Plot ----
   
   output$streamflow_plot_north <- renderPlot({
     if (!"pressure1_Q" %in% input$variable_select)
@@ -225,7 +223,7 @@ server <- function(input, output, session) {
   })
   
   
-  # ---- South Plot ----
+  # ---- South Streamflow Plot ----
   
   output$streamflow_plot_south <- renderPlot({
     if (!"pressure1_Q" %in% input$variable_select)
@@ -237,7 +235,9 @@ server <- function(input, output, session) {
       theme_classic()
   })
   
+  
   # ---- North & South Wind Speed Avg & Max Plot ----
+  
   output$wind_speed_plot_north <- renderPlot({
     if (!any(c("WS_ms_Avg", "WS_ms_Max") %in% input$variable_select))
       return(NULL)
@@ -284,7 +284,9 @@ server <- function(input, output, session) {
     p + scale_color_manual(values = c("Avg" = "darkgreen", "Max" = "red"))
   })
   
+  
   # ---- North & South Wind Direction Plot ----
+  
   output$wind_dir_plot_north <- renderPlot({
     if (!"WindDir" %in% input$variable_select)
       return(NULL)
@@ -314,7 +316,6 @@ server <- function(input, output, session) {
       labs(title = "South Aspect Wind Direction", x = "Date") +
       theme_classic()
   })
-  
 }
 
 shinyApp(ui = ui, server = server)
