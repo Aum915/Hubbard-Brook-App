@@ -127,9 +127,9 @@ wxsta1_Wx_1_rain.dat
 ### plot ReportPCP as 15min precip in inches
 
 **plotting:
-WS_ms_Avg and WS_ms_Max and WindDir; plot just one file for now
+//WS_ms_Avg and WS_ms_Max and WindDir; plot just one file for now
 soil volumetric water content - plot variable depths from TDR_10typ_vwc, TDR_30typ_vwc, TDR_50typ_vwc (10,30, 50cm depth). plot just one file for now
 Plot SWE - snow water equivelent #I thought this was percent, but see units here as cm. will confirm with Nina. plot just one file for now 
-plot stream discharge as cubic feet per  second (pressure_Q). Weir 3 is south facing, weir 9 is north facing.
+//plot stream discharge as cubic feet per  second (pressure_Q). Weir 3 is south facing, weir 9 is north facing.
 Air temp measured by 3 sensors.ST110_[1,2,3]. These can be averaged. We should apply upper and lower QC cutoffs. SlrW2_Avg is Solar Radiation (only on sta1), RH is Relative Humidity
 plot ReportPCP as 15min precip in inches
