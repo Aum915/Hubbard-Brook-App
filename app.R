@@ -41,7 +41,7 @@ product_label <- function(site_type, product) {
   if (site_type == "wxsta" && product == "air_temp_15min") return("Air temperature (15-min)")
   if (site_type == "wxsta" && product == "air_temp") return("Air temperature")
   if (site_type == "snowcourse" && product == "snowpack") return("Snow depth & SWE")
-  if (site_type == "snowcourse" && product == "soil") return("Soil conditions")
+  if (site_type == "snowcourse" && product == "soil") return("Soil moisture (Typical)")
   if (site_type == "kineo" && product == "wind") return("Wind")
   str_to_sentence(product)
 }
@@ -140,7 +140,7 @@ read_toa5_table <- function(path, tz = "America/New_York") {
   skip_n <- 4
   
   if (!any(toupper(col_names) == "TIMESTAMP")) {
-    lines <- readLines(path, n = 60, warn = FALSE)
+    lines <- readLines(path, n = 80, warn = FALSE)
     header_idx <- which(grepl("^\"?TIMESTAMP\"?,", lines, ignore.case = TRUE))[1]
     if (is.na(header_idx)) stop("Could not find TIMESTAMP header row in: ", path)
     col_names <- gsub('"', "", lines[header_idx])
@@ -167,32 +167,27 @@ read_toa5_table <- function(path, tz = "America/New_York") {
 }
 
 # -----------------------------
-# Soil variable dropdown
+# Soil (LIMITED): Typical VWC only at 10/30/50 cm
 # -----------------------------
-make_soil_var_choices <- function(df) {
+make_soil_vwc_typ_choices <- function(df) {
   choices <- c()
-  add_if_exists <- function(col, label) {
+  add <- function(col, label) {
     if (col %in% names(df)) choices <<- c(choices, setNames(col, label))
   }
-  for (loc in c("typ", "bhs")) {
-    loc_label <- if (loc == "typ") "Typical" else "BHS"
-    for (d in c(10, 30, 50)) {
-      add_if_exists(paste0("TDR_", d, loc, "_vwc"),
-                    paste0("Soil moisture (VWC %) — ", d, " cm (", loc_label, ")"))
-      add_if_exists(paste0("Terros_", d, loc, "_wp"),
-                    paste0("Water potential (kPa) — ", d, " cm (", loc_label, ")"))
-      add_if_exists(paste0("Terros_", d, loc, "_t"),
-                    paste0("Soil temperature (°C) — ", d, " cm (", loc_label, ")"))
-      add_if_exists(paste0("TDR_", d, loc, "_t"),
-                    paste0("Soil temperature (°C, TDR) — ", d, " cm (", loc_label, ")"))
-    }
-  }
+  add("TDR_10typ_vwc", "Soil moisture (VWC %) — 10 cm (Typical)")
+  add("TDR_30typ_vwc", "Soil moisture (VWC %) — 30 cm (Typical)")
+  add("TDR_50typ_vwc", "Soil moisture (VWC %) — 50 cm (Typical)")
   choices
 }
 
 # -----------------------------
-# Standardization (non-soil)
+# Standardization
 # -----------------------------
+pick_first_existing <- function(df, candidates) {
+  hit <- candidates[candidates %in% names(df)]
+  if (length(hit) == 0) NA_character_ else hit[1]
+}
+
 standardize_dataset <- function(df, site_type, product) {
   out <- df %>% select(datetime, everything())
   
@@ -214,9 +209,8 @@ standardize_dataset <- function(df, site_type, product) {
   }
   
   if (site_type == "wxsta" && product %in% c("air_temp_15min", "air_temp")) {
-    air_candidates <- c("RH_airtemp", "Air_TempC_Avg", "AirTC", "Ta", "air_temp")
-    air_col <- air_candidates[air_candidates %in% names(out)]
-    air_col <- if (length(air_col) == 0) NA_character_ else air_col[1]
+    air_candidates <- c("RH_airtemp", "Air_TempC_Avg", "AirTC", "Ta", "air_temp", "ActTemp")
+    air_col <- pick_first_existing(out, air_candidates)
     out <- out %>%
       mutate(air_temp_c = if (!is.na(air_col)) suppressWarnings(as.numeric(.data[[air_col]])) else NA_real_)
   }
@@ -226,6 +220,24 @@ standardize_dataset <- function(df, site_type, product) {
       mutate(
         snow_depth_cm = if ("Depthscaled" %in% names(out)) suppressWarnings(as.numeric(Depthscaled)) else NA_real_,
         swe_cm = if ("SWE" %in% names(out)) suppressWarnings(as.numeric(SWE)) else NA_real_
+      )
+  }
+  
+  # ---- Kineo wind: auto-detect common columns and standardize ----
+  if (site_type == "kineo" && product == "wind") {
+    # common possibilities across Campbell/TOA5 exports
+    spd_candidates <- c("WindSpd", "Wind_Spd", "WS", "WS_ms", "WS_mps", "WindSpeed", "Wind_Speed",
+                        "WS_Avg", "WindSpd_Avg", "WindSpd_ms", "WindSpd_mps")
+    dir_candidates <- c("WindDir", "Wind_Dir", "WD", "WD_deg", "WindDirection", "Wind_Direction",
+                        "WD_Avg", "WindDir_Avg")
+    
+    spd_col <- pick_first_existing(out, spd_candidates)
+    dir_col <- pick_first_existing(out, dir_candidates)
+    
+    out <- out %>%
+      mutate(
+        wind_speed = if (!is.na(spd_col)) suppressWarnings(as.numeric(.data[[spd_col]])) else NA_real_,
+        wind_dir   = if (!is.na(dir_col)) suppressWarnings(as.numeric(.data[[dir_col]])) else NA_real_
       )
   }
   
@@ -278,13 +290,13 @@ server <- function(input, output, session) {
   observe({ refresh_index() })
   observeEvent(input$refresh, { refresh_index() })
   
-  # strict dropdown builders (base R subsetting)
+  # strict dropdown builders (base subsetting)
   site_choices <- function(site_type) {
     idx <- file_index()
     idx <- idx[idx$site_type == site_type, , drop = FALSE]
     if (nrow(idx) == 0) return(setNames(character(0), character(0)))
     sites <- idx %>% distinct(site_key, site_display) %>% arrange(site_display)
-    setNames(sites$site_key, sites$site_display)  # names=labels, values=keys
+    setNames(sites$site_key, sites$site_display)
   }
   
   product_choices <- function(site_type, site_key) {
@@ -292,7 +304,7 @@ server <- function(input, output, session) {
     idx <- idx[idx$site_type == site_type & idx$site_key == site_key, , drop = FALSE]
     if (nrow(idx) == 0) return(setNames(character(0), character(0)))
     prods <- idx %>% distinct(product, product_display) %>% arrange(product_display)
-    setNames(prods$product, prods$product_display) # names=labels, values=product codes
+    setNames(prods$product, prods$product_display)
   }
   
   # Site A dropdown updates
@@ -376,10 +388,10 @@ server <- function(input, output, session) {
     st <- isolate(input$site_type_a)
     pr <- isolate(input$product_a)
     
-    # Build choices (same defaults as before for weir/wxsta/etc.)
+    # Soil: only Typical VWC at 10/30/50
     if (st == "snowcourse" && pr == "soil") {
-      var_choices <- make_soil_var_choices(df)
-      if (length(var_choices) == 0) return(helpText("No recognized soil sensor columns found."))
+      var_choices <- make_soil_vwc_typ_choices(df)
+      if (length(var_choices) == 0) return(helpText("No typical VWC columns found (expected TDR_10typ_vwc etc.)."))
     } else {
       var_choices <- c()
       if ("discharge_cfs" %in% names(df)) var_choices <- c(var_choices, "Discharge (cfs)" = "discharge_cfs")
@@ -388,6 +400,10 @@ server <- function(input, output, session) {
       if ("air_temp_c" %in% names(df))   var_choices <- c(var_choices, "Air temperature (°C)" = "air_temp_c")
       if ("snow_depth_cm" %in% names(df)) var_choices <- c(var_choices, "Snow depth (cm)" = "snow_depth_cm")
       if ("swe_cm" %in% names(df))        var_choices <- c(var_choices, "Snow water equivalent (cm)" = "swe_cm")
+      
+      # Kineo wind
+      if ("wind_speed" %in% names(df)) var_choices <- c(var_choices, "Wind speed" = "wind_speed")
+      if ("wind_dir" %in% names(df))   var_choices <- c(var_choices, "Wind direction (deg)" = "wind_dir")
     }
     
     if (length(var_choices) == 0) return(helpText("No plottable variables found for this dataset."))
@@ -450,7 +466,7 @@ server <- function(input, output, session) {
     }
   })
   
-  # Compare plots (one variable)
+  # Compare plots
   output$plot_a <- renderPlotly({
     req(isTRUE(input$compare), input$var_select)
     df <- filtered_a()
@@ -479,7 +495,7 @@ server <- function(input, output, session) {
     }
   })
   
-  # Single-site stacked plots (multiple variables)
+  # Single-site stacked plots
   observe({
     req(!isTRUE(input$compare))
     req(input$vars_single)
