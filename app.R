@@ -25,6 +25,9 @@ infer_aspect_vec <- function(site_type_vec, site_id_vec) {
   out
 }
 
+# -----------------------------
+# Pretty labels
+# -----------------------------
 SITE_TYPE_CHOICES <- c(
   "Weir" = "weir",
   "Water station" = "wxsta",
@@ -43,6 +46,9 @@ product_label <- function(site_type, product) {
   str_to_sentence(product)
 }
 
+# -----------------------------
+# File index
+# -----------------------------
 empty_file_index <- function() {
   tibble(
     path = character(),
@@ -124,6 +130,9 @@ build_file_index <- function(data_dir) {
   if (nrow(idx) == 0) empty_file_index() else idx
 }
 
+# -----------------------------
+# TOA5 reader
+# -----------------------------
 read_toa5_table <- function(path, tz = "America/New_York") {
   header_lines <- readLines(path, n = 6, warn = FALSE)
   col_names <- gsub('"', "", header_lines[2])
@@ -157,6 +166,9 @@ read_toa5_table <- function(path, tz = "America/New_York") {
     filter(!is.na(datetime))
 }
 
+# -----------------------------
+# Soil variable dropdown
+# -----------------------------
 make_soil_var_choices <- function(df) {
   choices <- c()
   add_if_exists <- function(col, label) {
@@ -178,6 +190,9 @@ make_soil_var_choices <- function(df) {
   choices
 }
 
+# -----------------------------
+# Standardization (non-soil)
+# -----------------------------
 standardize_dataset <- function(df, site_type, product) {
   out <- df %>% select(datetime, everything())
   
@@ -202,21 +217,24 @@ standardize_dataset <- function(df, site_type, product) {
     air_candidates <- c("RH_airtemp", "Air_TempC_Avg", "AirTC", "Ta", "air_temp")
     air_col <- air_candidates[air_candidates %in% names(out)]
     air_col <- if (length(air_col) == 0) NA_character_ else air_col[1]
-    out <- out %>% mutate(
-      air_temp_c = if (!is.na(air_col)) suppressWarnings(as.numeric(.data[[air_col]])) else NA_real_
-    )
+    out <- out %>%
+      mutate(air_temp_c = if (!is.na(air_col)) suppressWarnings(as.numeric(.data[[air_col]])) else NA_real_)
   }
   
   if (site_type == "snowcourse" && product == "snowpack") {
-    out <- out %>% mutate(
-      snow_depth_cm = if ("Depthscaled" %in% names(out)) suppressWarnings(as.numeric(Depthscaled)) else NA_real_,
-      swe_cm = if ("SWE" %in% names(out)) suppressWarnings(as.numeric(SWE)) else NA_real_
-    )
+    out <- out %>%
+      mutate(
+        snow_depth_cm = if ("Depthscaled" %in% names(out)) suppressWarnings(as.numeric(Depthscaled)) else NA_real_,
+        swe_cm = if ("SWE" %in% names(out)) suppressWarnings(as.numeric(SWE)) else NA_real_
+      )
   }
   
   out
 }
 
+# -----------------------------
+# UI
+# -----------------------------
 ui <- fluidPage(
   titlePanel("Hubbard Brook Viewer (Static TOA5 Prototype)"),
   sidebarLayout(
@@ -241,7 +259,7 @@ ui <- fluidPage(
       
       hr(),
       dateRangeInput("date_range", "Date range", start = Sys.Date() - 30, end = Sys.Date()),
-      uiOutput("var_ui"),
+      uiOutput("var_ui_mode"),
       hr(),
       verbatimTextOutput("status")
     ),
@@ -249,6 +267,9 @@ ui <- fluidPage(
   )
 )
 
+# -----------------------------
+# Server
+# -----------------------------
 server <- function(input, output, session) {
   
   file_index <- reactiveVal(empty_file_index())
@@ -257,14 +278,12 @@ server <- function(input, output, session) {
   observe({ refresh_index() })
   observeEvent(input$refresh, { refresh_index() })
   
-  # ---- HARD FILTERED dropdown builders (base R subsetting) ----
+  # strict dropdown builders (base R subsetting)
   site_choices <- function(site_type) {
     idx <- file_index()
     idx <- idx[idx$site_type == site_type, , drop = FALSE]
     if (nrow(idx) == 0) return(setNames(character(0), character(0)))
-    sites <- idx %>%
-      distinct(site_key, site_display) %>%
-      arrange(site_display)
+    sites <- idx %>% distinct(site_key, site_display) %>% arrange(site_display)
     setNames(sites$site_key, sites$site_display)  # names=labels, values=keys
   }
   
@@ -272,17 +291,14 @@ server <- function(input, output, session) {
     idx <- file_index()
     idx <- idx[idx$site_type == site_type & idx$site_key == site_key, , drop = FALSE]
     if (nrow(idx) == 0) return(setNames(character(0), character(0)))
-    prods <- idx %>%
-      distinct(product, product_display) %>%
-      arrange(product_display)
+    prods <- idx %>% distinct(product, product_display) %>% arrange(product_display)
     setNames(prods$product, prods$product_display) # names=labels, values=product codes
   }
   
-  # ---- Site A updates ----
+  # Site A dropdown updates
   observeEvent(list(file_index(), input$site_type_a), {
     updateSelectInput(session, "site_a", choices = character(0), selected = character(0))
     updateSelectInput(session, "product_a", choices = character(0), selected = character(0))
-    
     ch <- site_choices(input$site_type_a)
     req(length(ch) > 0)
     updateSelectInput(session, "site_a", choices = ch, selected = ch[[1]])
@@ -291,17 +307,15 @@ server <- function(input, output, session) {
   observeEvent(list(file_index(), input$site_type_a, input$site_a), {
     req(nzchar(input$site_a))
     updateSelectInput(session, "product_a", choices = character(0), selected = character(0))
-    
     ch <- product_choices(input$site_type_a, input$site_a)
     req(length(ch) > 0)
     updateSelectInput(session, "product_a", choices = ch, selected = ch[[1]])
   }, ignoreInit = FALSE)
   
-  # ---- Site B updates ----
+  # Site B dropdown updates
   observeEvent(list(file_index(), input$site_type_b), {
     updateSelectInput(session, "site_b", choices = character(0), selected = character(0))
     updateSelectInput(session, "product_b", choices = character(0), selected = character(0))
-    
     ch <- site_choices(input$site_type_b)
     req(length(ch) > 0)
     updateSelectInput(session, "site_b", choices = ch, selected = ch[[1]])
@@ -310,7 +324,6 @@ server <- function(input, output, session) {
   observeEvent(list(file_index(), input$site_type_b, input$site_b), {
     req(nzchar(input$site_b))
     updateSelectInput(session, "product_b", choices = character(0), selected = character(0))
-    
     ch <- product_choices(input$site_type_b, input$site_b)
     req(length(ch) > 0)
     updateSelectInput(session, "product_b", choices = ch, selected = ch[[1]])
@@ -318,7 +331,9 @@ server <- function(input, output, session) {
   
   selected_path <- function(site_type_arg, site_key_arg, product_arg) {
     idx <- file_index()
-    idx <- idx[idx$site_type == site_type_arg & idx$site_key == site_key_arg & idx$product == product_arg, , drop = FALSE]
+    idx <- idx[idx$site_type == site_type_arg &
+                 idx$site_key == site_key_arg &
+                 idx$product == product_arg, , drop = FALSE]
     if (nrow(idx) == 0) return(character(0))
     idx$path[[1]]
   }
@@ -331,7 +346,9 @@ server <- function(input, output, session) {
     df2 <- standardize_dataset(df, site_type_arg, product_arg)
     
     meta <- file_index()
-    meta <- meta[meta$site_type == site_type_arg & meta$site_key == site_key_arg & meta$product == product_arg, , drop = FALSE]
+    meta <- meta[meta$site_type == site_type_arg &
+                   meta$site_key == site_key_arg &
+                   meta$product == product_arg, , drop = FALSE]
     meta <- meta[1, , drop = FALSE]
     
     df2 %>%
@@ -353,29 +370,41 @@ server <- function(input, output, session) {
     load_site(input$site_type_b, input$site_b, input$product_b)
   })
   
-  output$var_ui <- renderUI({
+  # ---- Variable UI: compare=single select, single-site=checkboxes ----
+  output$var_ui_mode <- renderUI({
     df <- data_a()
     st <- isolate(input$site_type_a)
     pr <- isolate(input$product_a)
     
+    # Build choices (same defaults as before for weir/wxsta/etc.)
     if (st == "snowcourse" && pr == "soil") {
-      soil_choices <- make_soil_var_choices(df)
-      if (length(soil_choices) == 0) return(helpText("No recognized soil sensor columns found."))
-      return(selectInput("var_select", "Variable", choices = soil_choices, selected = soil_choices[[1]]))
+      var_choices <- make_soil_var_choices(df)
+      if (length(var_choices) == 0) return(helpText("No recognized soil sensor columns found."))
+    } else {
+      var_choices <- c()
+      if ("discharge_cfs" %in% names(df)) var_choices <- c(var_choices, "Discharge (cfs)" = "discharge_cfs")
+      if ("stage_m" %in% names(df))      var_choices <- c(var_choices, "Stage height (m)" = "stage_m")
+      if ("precip_mm" %in% names(df))    var_choices <- c(var_choices, "Precipitation (mm per interval)" = "precip_mm")
+      if ("air_temp_c" %in% names(df))   var_choices <- c(var_choices, "Air temperature (°C)" = "air_temp_c")
+      if ("snow_depth_cm" %in% names(df)) var_choices <- c(var_choices, "Snow depth (cm)" = "snow_depth_cm")
+      if ("swe_cm" %in% names(df))        var_choices <- c(var_choices, "Snow water equivalent (cm)" = "swe_cm")
     }
     
-    choices <- c()
-    if ("discharge_cfs" %in% names(df)) choices <- c(choices, "Discharge (cfs)" = "discharge_cfs")
-    if ("stage_m" %in% names(df)) choices <- c(choices, "Stage height (m)" = "stage_m")
-    if ("precip_mm" %in% names(df)) choices <- c(choices, "Precipitation (mm per interval)" = "precip_mm")
-    if ("air_temp_c" %in% names(df)) choices <- c(choices, "Air temperature (°C)" = "air_temp_c")
-    if ("snow_depth_cm" %in% names(df)) choices <- c(choices, "Snow depth (cm)" = "snow_depth_cm")
-    if ("swe_cm" %in% names(df)) choices <- c(choices, "Snow water equivalent (cm)" = "swe_cm")
+    if (length(var_choices) == 0) return(helpText("No plottable variables found for this dataset."))
     
-    if (length(choices) == 0) helpText("No standardized variables found for this dataset.")
-    else selectInput("var_select", "Variable", choices = choices, selected = choices[[1]])
+    if (isTRUE(input$compare)) {
+      selectInput("var_select", "Variable", choices = var_choices, selected = var_choices[[1]])
+    } else {
+      checkboxGroupInput(
+        "vars_single",
+        "Variables (stacked plots)",
+        choices = var_choices,
+        selected = var_choices[[1]]
+      )
+    }
   })
   
+  # date filtering
   filtered_a <- reactive({
     req(input$date_range)
     data_a() %>%
@@ -390,17 +419,7 @@ server <- function(input, output, session) {
              datetime <= as.POSIXct(input$date_range[2] + 1))
   })
   
-  output$dynamic_plots <- renderUI({
-    if (isTRUE(input$compare)) {
-      fluidRow(
-        column(6, plotlyOutput("plot_a", height = "520px")),
-        column(6, plotlyOutput("plot_b", height = "520px"))
-      )
-    } else {
-      fluidRow(column(12, plotlyOutput("plot_a", height = "520px")))
-    }
-  })
-  
+  # plot factory
   make_plot <- function(df, var, title) {
     req(nrow(df) > 0, var %in% names(df))
     type <- if (var == "precip_mm") "bar" else "scatter"
@@ -416,15 +435,31 @@ server <- function(input, output, session) {
       config(displaylogo = FALSE, modeBarButtonsToRemove = c("toImage", "sendDataToCloud"))
   }
   
+  # UI for plots (compare vs single stacked)
+  output$dynamic_plots <- renderUI({
+    if (isTRUE(input$compare)) {
+      fluidRow(
+        column(6, plotlyOutput("plot_a", height = "520px")),
+        column(6, plotlyOutput("plot_b", height = "520px"))
+      )
+    } else {
+      req(input$vars_single)
+      tagList(lapply(seq_along(input$vars_single), function(i) {
+        plotlyOutput(paste0("plot_single_", i), height = "320px")
+      }))
+    }
+  })
+  
+  # Compare plots (one variable)
   output$plot_a <- renderPlotly({
-    req(input$var_select)
+    req(isTRUE(input$compare), input$var_select)
     df <- filtered_a()
     ttl <- paste0(unique(df$site_display), " | ", unique(df$product_display))
     make_plot(df, input$var_select, ttl)
   })
   
   output$plot_b <- renderPlotly({
-    req(input$compare, input$var_select)
+    req(isTRUE(input$compare), input$var_select)
     df <- filtered_b()
     ttl <- paste0(unique(df$site_display), " | ", unique(df$product_display))
     
@@ -444,12 +479,33 @@ server <- function(input, output, session) {
     }
   })
   
+  # Single-site stacked plots (multiple variables)
+  observe({
+    req(!isTRUE(input$compare))
+    req(input$vars_single)
+    
+    df <- filtered_a()
+    vars <- input$vars_single
+    
+    lapply(seq_along(vars), function(i) {
+      local({
+        ii <- i
+        v <- vars[[ii]]
+        
+        output[[paste0("plot_single_", ii)]] <- renderPlotly({
+          req(v %in% names(df))
+          base_ttl <- paste0(unique(df$site_display), " | ", unique(df$product_display))
+          make_plot(df, v, paste0(base_ttl, " | ", v))
+        })
+      })
+    })
+  })
+  
   output$status <- renderText({
     idx <- file_index()
     paste0(
       "Data dir: ", normalizePath(DATA_DIR, winslash = "/", mustWork = FALSE), "\n",
-      "Indexed files: ", nrow(idx), "\n",
-      "Site types found: ", paste(sort(unique(idx$site_type)), collapse = ", ")
+      "Indexed files: ", nrow(idx)
     )
   })
 }
