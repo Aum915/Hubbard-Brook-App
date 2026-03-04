@@ -80,7 +80,7 @@ build_file_index <- function(data_dir) {
         site_type == "weir" ~ "stream",
         site_type == "kineo" ~ "wind",
         
-        # ---- more robust filename matching for precip ----
+        # robust filename matching for precip
         site_type == "wxsta" & str_detect(file_l, "rain|pcp|precip|ppt") ~ "precip",
         
         # air-temp rule (filename-based)
@@ -101,7 +101,7 @@ build_file_index <- function(data_dir) {
 }
 
 # -----------------------------
-# TOA5 reader (supports your 4-line TOA5 headers)
+# TOA5 reader (supports 4-line TOA5 headers)
 # -----------------------------
 read_toa5_table <- function(path, tz = "America/New_York") {
   header_lines <- readLines(path, n = 6, warn = FALSE)
@@ -307,10 +307,10 @@ plot_lines_multi <- function(df, y, title, ylab) {
   p <- plot_ly() %>%
     layout(
       title = list(text = title),
-      xaxis = list(title = "", rangeslider = list(visible = FALSE)),   # removed label
+      xaxis = list(title = "", rangeslider = list(visible = FALSE)),
       yaxis = list(title = ylab),
-      legend = list(orientation = "h", x = 0, y = -0.25),              # legend under plot
-      margin = list(l = 70, r = 20, b = 95, t = 60)                    # extra bottom room
+      legend = list(orientation = "h", x = 0, y = -0.25),
+      margin = list(l = 70, r = 20, b = 95, t = 60)
     )
   for (lab in unique(df$series_label)) {
     sub <- df %>% filter(series_label == lab)
@@ -324,11 +324,11 @@ plot_bars_multi <- function(df, y, title, ylab) {
   p <- plot_ly() %>%
     layout(
       title = list(text = title),
-      xaxis = list(title = "", rangeslider = list(visible = FALSE)),   # removed label
+      xaxis = list(title = "", rangeslider = list(visible = FALSE)),
       yaxis = list(title = ylab),
       barmode = "overlay",
-      legend = list(orientation = "h", x = 0, y = -0.25),              # legend under plot
-      margin = list(l = 70, r = 20, b = 95, t = 60)                    # extra bottom room
+      legend = list(orientation = "h", x = 0, y = -0.25),
+      margin = list(l = 70, r = 20, b = 95, t = 60)
     )
   for (lab in unique(df$series_label)) {
     sub <- df %>% filter(series_label == lab)
@@ -337,15 +337,15 @@ plot_bars_multi <- function(df, y, title, ylab) {
   base_plot_cfg(p)
 }
 
-plot_soil_multi <- function(df, depths_on = c("10","30","50"), title = "Soil moisture (Typical)") {
+plot_soil_multi <- function(df, depths_on = c("10", "30", "50"), title = "Soil moisture (Typical)") {
   req(nrow(df) > 0)
   p <- plot_ly() %>%
     layout(
       title = list(text = title),
-      xaxis = list(title = "", rangeslider = list(visible = FALSE)),   # removed label
+      xaxis = list(title = "", rangeslider = list(visible = FALSE)),
       yaxis = list(title = "Volumetric Water Content (VWC %)"),
-      legend = list(orientation = "h", x = 0, y = -0.25),              # legend under plot
-      margin = list(l = 70, r = 20, b = 95, t = 60)                    # extra bottom room
+      legend = list(orientation = "h", x = 0, y = -0.25),
+      margin = list(l = 70, r = 20, b = 95, t = 60)
     )
   
   for (lab in unique(df$series_label)) {
@@ -483,7 +483,7 @@ server <- function(input, output, session) {
       site_id = sid
     )
     
-    # ✅ prevents bind_rows type mismatch errors in "Show both"
+    # prevents bind_rows type mismatch errors in "Show both"
     df <- keep_plot_cols(df, site_type, product)
     
     df$series_label <- label
@@ -622,15 +622,15 @@ server <- function(input, output, session) {
       add_lines(data = df, x = ~datetime, y = ~wind_speed_max, name = "Max wind speed") %>%
       layout(
         title = list(text = "Wind speed (Kineo Tower)"),
-        xaxis = list(title = "", rangeslider = list(visible = FALSE)),  # removed label
+        xaxis = list(title = "", rangeslider = list(visible = FALSE)),
         yaxis = list(title = "Wind speed (m/s)"),
-        legend = list(orientation = "h", x = 0, y = -0.25),             # legend under plot
-        margin = list(l = 70, r = 20, b = 95, t = 60)                   # extra bottom room
+        legend = list(orientation = "h", x = 0, y = -0.25),
+        margin = list(l = 70, r = 20, b = 95, t = 60)
       )
     base_plot_cfg(p)
   })
   
-  # ---- wind direction ----
+  # ---- wind direction (points) ----
   output$plot_wind_dir <- renderPlotly({
     req("wind_dir" %in% input$graphs_on)
     df <- filter_by_date(datasets()$kineo)
