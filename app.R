@@ -191,25 +191,32 @@ standardize_dataset <- function(df, site_type, product, site_id = NA_character_)
       )
     
     area_km2 <- WEIR_AREA_KM2[[as.character(site_id)]]
+    if (is.null(area_km2) || is.na(area_km2)) area_km2 <- NA_real_
     
     out <- out %>%
       mutate(
         discharge_mm_day = {
-          area_m2 <- area_km2 * 1e6
-          q_m3s <- discharge_cfs * 0.028316846592
-          (q_m3s / area_m2) * 86400 * 1000
+          if (is.na(area_km2)) {
+            NA_real_
+          } else {
+            area_m2 <- area_km2 * 1e6
+            q_m3s <- discharge_cfs * 0.028316846592
+            (q_m3s / area_m2) * 86400 * 1000
+          }
         }
       )
   }
   
   if (site_type == "wxsta" && product == "precip") {
     p_col <- pick_first(out, c("ReportPCP", "Precip", "precip", "Rain", "rain"))
-    out <- out %>% mutate(precip_mm = if (!is.na(p_col)) suppressWarnings(as.numeric(.data[[p_col]])) else NA_real_)
+    out <- out %>%
+      mutate(precip_mm = if (!is.na(p_col)) suppressWarnings(as.numeric(.data[[p_col]])) else NA_real_)
   }
   
   if (site_type == "wxsta" && product == "air_temp_15") {
     t_col <- pick_first(out, c("Air_TempC_Avg", "RH_airtemp", "ActTemp", "AirTC", "Ta"))
-    out <- out %>% mutate(air_temp_c = if (!is.na(t_col)) suppressWarnings(as.numeric(.data[[t_col]])) else NA_real_)
+    out <- out %>%
+      mutate(air_temp_c = if (!is.na(t_col)) suppressWarnings(as.numeric(.data[[t_col]])) else NA_real_)
   }
   
   if (site_type == "snowcourse" && product == "snowpack") {
@@ -273,6 +280,23 @@ keep_plot_cols <- function(df, site_type, product) {
 }
 
 # -----------------------------
+# Daily cumulative precip helper (resets each day)
+# -----------------------------
+make_daily_cum_precip <- function(df) {
+  if (is.null(df) || nrow(df) == 0) return(df)
+  
+  df %>%
+    mutate(day = as.Date(datetime)) %>%
+    arrange(series_label, day, datetime) %>%
+    group_by(series_label, day) %>%
+    mutate(
+      precip_mm_clean = replace_na(precip_mm, 0),
+      precip_cum_day_mm = cumsum(precip_mm_clean)
+    ) %>%
+    ungroup()
+}
+
+# -----------------------------
 # Aspect selection logic
 #   South = lower numeric ID
 #   North = higher numeric ID
@@ -302,9 +326,9 @@ base_plot_cfg <- function(p) {
   p %>% config(displaylogo = FALSE, modeBarButtonsToRemove = c("sendDataToCloud", "toImage"))
 }
 
-plot_lines_multi <- function(df, y, title, ylab) {
+plot_lines_multi <- function(df, y, title, ylab, source_id) {
   req(nrow(df) > 0, y %in% names(df))
-  p <- plot_ly() %>%
+  p <- plot_ly(source = source_id) %>%
     layout(
       title = list(text = title),
       xaxis = list(title = "", rangeslider = list(visible = FALSE)),
@@ -319,9 +343,9 @@ plot_lines_multi <- function(df, y, title, ylab) {
   base_plot_cfg(p)
 }
 
-plot_bars_multi <- function(df, y, title, ylab) {
+plot_bars_multi <- function(df, y, title, ylab, source_id) {
   req(nrow(df) > 0, y %in% names(df))
-  p <- plot_ly() %>%
+  p <- plot_ly(source = source_id) %>%
     layout(
       title = list(text = title),
       xaxis = list(title = "", rangeslider = list(visible = FALSE)),
@@ -337,9 +361,9 @@ plot_bars_multi <- function(df, y, title, ylab) {
   base_plot_cfg(p)
 }
 
-plot_soil_multi <- function(df, depths_on = c("10", "30", "50"), title = "Soil moisture (Typical)") {
+plot_soil_multi <- function(df, depths_on = c("10", "30", "50"), title = "Soil moisture (Typical)", source_id) {
   req(nrow(df) > 0)
-  p <- plot_ly() %>%
+  p <- plot_ly(source = source_id) %>%
     layout(
       title = list(text = title),
       xaxis = list(title = "", rangeslider = list(visible = FALSE)),
@@ -387,6 +411,7 @@ ui <- fluidPage(
           "Stream discharge (mm/day)" = "discharge_mmday",
           "Stage height" = "stage",
           "Precipitation" = "precip",
+          "Cumulative daily precipitation" = "precip_cum_day",
           "Air temperature" = "airtemp",
           "Snow depth" = "snowdepth",
           "Wind speed (avg/max)" = "wind_speed",
@@ -546,6 +571,56 @@ server <- function(input, output, session) {
     }))
   })
   
+  # ---- Linked zoom across all plots ----
+  observers <- reactiveValues()
+  is_syncing <- reactiveVal(FALSE)
+  
+  observeEvent(input$graphs_on, {
+    req(input$graphs_on)
+    for (id in input$graphs_on) {
+      if (!is.null(observers[[id]])) next
+      
+      local({
+        my_id <- id
+        source_name <- paste0("plot_", my_id)
+        
+        observers[[my_id]] <- observeEvent(
+          event_data("plotly_relayout", source = source_name),
+          {
+            if (is_syncing()) return()
+            ev <- event_data("plotly_relayout", source = source_name)
+            if (is.null(ev)) return()
+            
+            # Zoom/pan range propagation
+            if (!is.null(ev[["xaxis.range[0]"]]) && !is.null(ev[["xaxis.range[1]"]])) {
+              xr <- c(ev[["xaxis.range[0]"]], ev[["xaxis.range[1]"]])
+              
+              is_syncing(TRUE)
+              on.exit(is_syncing(FALSE), add = TRUE)
+              
+              for (other in setdiff(input$graphs_on, my_id)) {
+                plotlyProxy(paste0("plot_", other), session) %>%
+                  plotlyProxyInvoke("relayout", list(xaxis = list(range = xr)))
+              }
+            }
+            
+            # Reset axes propagation (autoscale)
+            if (!is.null(ev[["xaxis.autorange"]]) && isTRUE(ev[["xaxis.autorange"]])) {
+              is_syncing(TRUE)
+              on.exit(is_syncing(FALSE), add = TRUE)
+              
+              for (other in setdiff(input$graphs_on, my_id)) {
+                plotlyProxy(paste0("plot_", other), session) %>%
+                  plotlyProxyInvoke("relayout", list(xaxis = list(autorange = TRUE)))
+              }
+            }
+          },
+          ignoreInit = TRUE
+        )
+      })
+    }
+  }, ignoreInit = FALSE)
+  
   # ---- discharge cfs ----
   output$plot_discharge <- renderPlotly({
     req("discharge" %in% input$graphs_on)
@@ -553,7 +628,7 @@ server <- function(input, output, session) {
     req(!is.null(df), nrow(df) > 0)
     validate(need("discharge_cfs" %in% names(df) && any(!is.na(df$discharge_cfs)),
                   "No discharge column found in this weir file."))
-    plot_lines_multi(df, "discharge_cfs", "Stream discharge", "Discharge (cfs)")
+    plot_lines_multi(df, "discharge_cfs", "Stream discharge", "Discharge (cfs)", source_id = "plot_discharge")
   })
   
   # ---- discharge mm/day ----
@@ -562,11 +637,12 @@ server <- function(input, output, session) {
     df <- filter_by_date(datasets()$weir)
     req(!is.null(df), nrow(df) > 0)
     validate(need("discharge_mm_day" %in% names(df) && any(!is.na(df$discharge_mm_day)),
-                  "No discharge/mm-day available for this weir file."))
+                  "No discharge/mm-day available for this weir file (check WEIR_AREA_KM2 mapping)."))
     plot_lines_multi(
       df, "discharge_mm_day",
       "Stream discharge (mm/day)",
-      "Discharge equivalent (mm/day)"
+      "Discharge equivalent (mm/day)",
+      source_id = "plot_discharge_mmday"
     )
   })
   
@@ -577,7 +653,7 @@ server <- function(input, output, session) {
     req(!is.null(df), nrow(df) > 0)
     validate(need("stage_m" %in% names(df) && any(!is.na(df$stage_m)),
                   "No stage column found in this weir file."))
-    plot_lines_multi(df, "stage_m", "Stage height", "Stage height (m)")
+    plot_lines_multi(df, "stage_m", "Stage height", "Stage height (m)", source_id = "plot_stage")
   })
   
   # ---- precip ----
@@ -587,7 +663,25 @@ server <- function(input, output, session) {
     req(!is.null(df), nrow(df) > 0)
     validate(need("precip_mm" %in% names(df) && any(!is.na(df$precip_mm)),
                   "No precipitation column found in this weather file."))
-    plot_bars_multi(df, "precip_mm", "Precipitation", "Precipitation (mm per interval)")
+    plot_bars_multi(df, "precip_mm", "Precipitation", "Precipitation (mm per interval)", source_id = "plot_precip")
+  })
+  
+  # ---- cumulative daily precip (resets at midnight) ----
+  output$plot_precip_cum_day <- renderPlotly({
+    req("precip_cum_day" %in% input$graphs_on)
+    df <- filter_by_date(datasets()$precip)
+    req(!is.null(df), nrow(df) > 0)
+    validate(need("precip_mm" %in% names(df) && any(!is.na(df$precip_mm)),
+                  "No precipitation column found in this weather file."))
+    
+    df2 <- make_daily_cum_precip(df)
+    plot_lines_multi(
+      df2,
+      "precip_cum_day_mm",
+      "Cumulative daily precipitation",
+      "Cumulative precipitation (mm/day)",
+      source_id = "plot_precip_cum_day"
+    )
   })
   
   # ---- air temp ----
@@ -597,7 +691,7 @@ server <- function(input, output, session) {
     req(!is.null(df), nrow(df) > 0)
     validate(need("air_temp_c" %in% names(df) && any(!is.na(df$air_temp_c)),
                   "No air temperature column found in this weather file."))
-    plot_lines_multi(df, "air_temp_c", "Air temperature", "Air temperature (°C)")
+    plot_lines_multi(df, "air_temp_c", "Air temperature", "Air temperature (°C)", source_id = "plot_airtemp")
   })
   
   # ---- snow depth ----
@@ -607,7 +701,7 @@ server <- function(input, output, session) {
     req(!is.null(df), nrow(df) > 0)
     validate(need("snow_depth_cm" %in% names(df) && any(!is.na(df$snow_depth_cm)),
                   "No snow depth column found in this snowcourse file."))
-    plot_lines_multi(df, "snow_depth_cm", "Snow depth", "Snow depth (cm)")
+    plot_lines_multi(df, "snow_depth_cm", "Snow depth", "Snow depth (cm)", source_id = "plot_snowdepth")
   })
   
   # ---- wind speed ----
@@ -617,7 +711,7 @@ server <- function(input, output, session) {
     req(!is.null(df), nrow(df) > 0)
     validate(need("wind_speed_avg" %in% names(df) && any(!is.na(df$wind_speed_avg)),
                   "No wind speed avg column found for Kineo."))
-    p <- plot_ly() %>%
+    p <- plot_ly(source = "plot_wind_speed") %>%
       add_lines(data = df, x = ~datetime, y = ~wind_speed_avg, name = "Avg wind speed") %>%
       add_lines(data = df, x = ~datetime, y = ~wind_speed_max, name = "Max wind speed") %>%
       layout(
@@ -630,7 +724,7 @@ server <- function(input, output, session) {
     base_plot_cfg(p)
   })
   
-  # ---- wind direction (points) ----
+  # ---- wind direction (points, smaller) ----
   output$plot_wind_dir <- renderPlotly({
     req("wind_dir" %in% input$graphs_on)
     df <- filter_by_date(datasets()$kineo)
@@ -639,6 +733,7 @@ server <- function(input, output, session) {
                   "No wind direction column found for Kineo."))
     
     p <- plot_ly(
+      source = "plot_wind_dir",
       data = df,
       x = ~datetime,
       y = ~wind_dir_deg,
@@ -664,7 +759,7 @@ server <- function(input, output, session) {
     req(input$soil_depths)
     df <- filter_by_date(datasets()$soil)
     req(!is.null(df), nrow(df) > 0)
-    plot_soil_multi(df, depths_on = input$soil_depths)
+    plot_soil_multi(df, depths_on = input$soil_depths, source_id = "plot_soil")
   })
   
   output$status <- renderText({
