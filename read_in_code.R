@@ -283,8 +283,7 @@ cleaned_lines <- c(
 )
 
 # Read cleaned text as CSV
-df <- read_csv(I(cleaned_lines), na = "NaN") |> 
-  drop_na()
+df <- read_csv(I(cleaned_lines), na = "NaN") 
 
 return(df)
 }
