@@ -3,6 +3,49 @@ library(tidyverse)
 library(lubridate)
 library(shiny)
 library(plotly)
+library(httr)
+
+# -----------------------------
+# Accessing credentials
+# -----------------------------
+station_keys <- c(
+  "kineo",
+  "snow2",
+  "snow19",
+  "weir3",
+  "weir9",
+  "temp1",
+  "temp23",
+  "rain1",
+  "rain23"
+)
+
+get_station_config <- function() {
+  cfg <- lapply(station_keys, function(key) {
+    
+    key_upper <- toupper(key)
+    
+    list(
+      user = Sys.getenv(paste0(key_upper, "_USER")),
+      pass = Sys.getenv(paste0(key_upper, "_PW")),
+      url  = Sys.getenv(paste0(key_upper, "_URL"))
+    )
+    
+  })
+  
+  names(cfg) <- station_keys
+  cfg
+}
+
+station_config <- get_station_config()
+
+# safety check
+missing_cfg <- sapply(station_config, function(x)
+  x$user == "" || x$pass == "" || x$url == "")
+
+if (any(missing_cfg)) {
+  stop(paste("Missing credentials for:", paste(names(missing_cfg)[missing_cfg], collapse = ", ")))
+}
 
 DATA_DIR <- "."
 
@@ -47,6 +90,73 @@ product_label <- function(site_type, product) {
 }
 
 # -----------------------------
+# Downloading live files
+# -----------------------------
+download_live_file <- function(station_key, file_name) {
+  
+  cfg <- station_config[[station_key]]
+  if (is.null(cfg)) return(NA_character_)
+  
+  # use the full URL from .Renviron directly
+  url <- cfg$url
+  
+  tmp <- tempfile(fileext = ".dat")
+  
+  res <- tryCatch(
+    httr::GET(url, httr::authenticate(cfg$user, cfg$pass, type = "basic")),
+    error = function(e) {
+      message("Request failed for ", station_key, ": ", e$message)
+      return(NULL)
+    }
+  )
+  
+  if (is.null(res)) return(NA_character_)
+  
+  if (httr::status_code(res) != 200) {
+    message("Failed to download ", station_key, " (status ", httr::status_code(res), ")")
+    return(NA_character_)
+  }
+  
+  writeBin(httr::content(res, "raw"), tmp)
+  tmp
+}
+
+# -----------------------------
+# Getting live files
+# -----------------------------
+get_live_file <- function(station_key, file_name, live_file_cache = NULL) {
+  
+  key <- paste(station_key, file_name, sep = "_")
+  
+  # if a reactive cache is provided (inside server), use it
+  if (!is.null(live_file_cache) && !is.null(live_file_cache[[key]])) {
+    return(live_file_cache[[key]])
+  }
+  
+  tmp <- download_live_file(station_key, file_name)
+  
+  if (!is.null(live_file_cache)) {
+    live_file_cache[[key]] <- tmp
+  }
+  
+  tmp
+}
+
+# -----------------------------
+# Soil (LIMITED): Typical VWC only at 10/30/50 cm
+# -----------------------------
+make_soil_vwc_typ_choices <- function(df) {
+  choices <- c()
+  add <- function(col, label) {
+    if (col %in% names(df)) choices <<- c(choices, setNames(col, label))
+  }
+  add("TDR_10typ_vwc", "Soil moisture (VWC %) — 10 cm (Typical)")
+  add("TDR_30typ_vwc", "Soil moisture (VWC %) — 30 cm (Typical)")
+  add("TDR_50typ_vwc", "Soil moisture (VWC %) — 50 cm (Typical)")
+  choices
+}
+
+# -----------------------------
 # File index
 # -----------------------------
 empty_file_index <- function() {
@@ -54,6 +164,7 @@ empty_file_index <- function() {
     path = character(),
     file = character(),
     file_l = character(),
+    station_key = character(),
     site_type = character(),
     site_id = character(),
     site_key = character(),
@@ -64,70 +175,57 @@ empty_file_index <- function() {
   )
 }
 
-build_file_index <- function(data_dir) {
-  files <- list.files(
-    data_dir,
-    pattern = "\\.(dat|csv)$",
-    full.names = TRUE,
-    ignore.case = TRUE
-  )
+build_file_index <- function() {
   
-  idx <- tibble(path = files, file = basename(files)) %>%
-    mutate(file_l = str_to_lower(file)) %>%
+  tibble(
+    station_key = c(
+      "kineo", "snow2", "snow19", "weir3", "weir9",
+      "temp1", "temp23", "rain1", "rain23"
+    ),
+    site_type = c(
+      "kineo", "snowcourse", "snowcourse", "weir", "weir",
+      "wxsta", "wxsta", "wxsta", "wxsta"
+    ),
+    site_id = c(
+      NA, "2", "19", "3", "9", "1", "23", "1", "23"
+    ),
+    product = c(
+      "wind", "snowpack", "snowpack", "stream", "stream",
+      "air_temp_15min", "air_temp_15min", "precip", "precip"
+    ),
+    file_name = c(
+      "Kineo_Tower_Kineo.dat",
+      "Snowcourse_2_SS2-snowdat.dat",
+      "Snowcourse_19_SS19_soildat.dat",
+      "weir3_weir_3.dat",
+      "weir9_weir_9.dat",
+      "wxsta1_SF_Wx1_Temp_15min.dat",
+      "wxsta23_Wx_23_Temp_15_min.dat",
+      "wxsta1_Wx_1_rain.dat",
+      "wxsta23_Wx_23_rain.dat"
+    )
+  ) %>%
+    rowwise() %>%
     mutate(
-      site_type = case_when(
-        str_detect(file_l, "^weir\\d+") ~ "weir",
-        str_detect(file_l, "^wxsta\\d+") ~ "wxsta",
-        str_detect(file_l, "^snowcourse[_\\-]\\d+") ~ "snowcourse",
-        str_detect(file_l, "^kineo") ~ "kineo",
-        TRUE ~ NA_character_
-      ),
-      site_id = case_when(
-        site_type %in% c("weir", "wxsta") ~ str_match(file_l, "^(weir|wxsta)(\\d+)")[, 3],
-        site_type == "snowcourse" ~ str_match(file_l, "^snowcourse[_\\-](\\d+)")[, 2],
-        site_type == "kineo" ~ NA_character_,
-        TRUE ~ NA_character_
-      ),
+      # path will be filled in the server per-session
+      path = NA_character_,
       site_key = case_when(
         site_type == "kineo" ~ "kineo_tower",
-        !is.na(site_id) ~ paste0(site_type, site_id),
-        TRUE ~ NA_character_
-      )
-    ) %>%
-    filter(!is.na(site_type), !is.na(site_key)) %>%
-    mutate(
-      aspect = if_else(site_type == "kineo", "Unknown",
-                       infer_aspect_vec(site_type, site_id)),
-      site_base = case_when(
-        site_type == "weir" ~ paste0("Weir ", site_id),
-        site_type == "wxsta" ~ paste0("Water station ", site_id),
-        site_type == "snowcourse" ~ paste0("Snowcourse ", site_id),
-        site_type == "kineo" ~ "Kineo Tower",
-        TRUE ~ site_key
+        TRUE ~ paste0(site_type, site_id)
       ),
       site_display = case_when(
         site_type == "kineo" ~ "Kineo Tower",
-        !is.na(aspect) & aspect != "Unknown" & aspect != "" ~ paste0(site_base, " — ", aspect, "-facing"),
-        TRUE ~ site_base
+        site_type == "snowcourse" ~ paste0("Snowcourse ", site_id),
+        site_type == "weir" ~ paste0("Weir ", site_id),
+        site_type == "wxsta" ~ paste0("Weather station ", site_id)
       ),
-      product = case_when(
-        site_type == "weir" ~ "stream",
-        site_type == "kineo" ~ "wind",
-        site_type == "wxsta" & str_detect(file_l, "rain") ~ "precip",
-        site_type == "wxsta" & str_detect(file_l, "temp") &
-          str_detect(file_l, "15\\s*min|15min|15_min") ~ "air_temp_15min",
-        site_type == "wxsta" & str_detect(file_l, "temp") ~ "air_temp",
-        site_type == "snowcourse" & str_detect(file_l, "snowdat") ~ "snowpack",
-        site_type == "snowcourse" & str_detect(file_l, "soildat") ~ "soil",
-        TRUE ~ "unknown"
-      ),
-      product_display = mapply(product_label, site_type, product, USE.NAMES = FALSE)
+      product_display = product_label(site_type, product)
     ) %>%
-    filter(product != "unknown") %>%
-    arrange(site_type, suppressWarnings(as.numeric(site_id)), product_display, file) %>%
-    select(path, file, file_l, site_type, site_id, site_key, aspect, site_display, product, product_display)
-  
-  if (nrow(idx) == 0) empty_file_index() else idx
+    ungroup() %>%
+    select(
+      path, file = file_name, file_l = file_name, station_key, site_type, site_id, 
+      site_key, site_display, product, product_display
+    )
 }
 
 # -----------------------------
@@ -164,20 +262,6 @@ read_toa5_table <- function(path, tz = "America/New_York") {
   df %>%
     mutate(datetime = ymd_hms(TIMESTAMP, tz = tz, quiet = TRUE)) %>%
     filter(!is.na(datetime))
-}
-
-# -----------------------------
-# Soil (LIMITED): Typical VWC only at 10/30/50 cm
-# -----------------------------
-make_soil_vwc_typ_choices <- function(df) {
-  choices <- c()
-  add <- function(col, label) {
-    if (col %in% names(df)) choices <<- c(choices, setNames(col, label))
-  }
-  add("TDR_10typ_vwc", "Soil moisture (VWC %) — 10 cm (Typical)")
-  add("TDR_30typ_vwc", "Soil moisture (VWC %) — 30 cm (Typical)")
-  add("TDR_50typ_vwc", "Soil moisture (VWC %) — 50 cm (Typical)")
-  choices
 }
 
 # -----------------------------
@@ -283,11 +367,23 @@ ui <- fluidPage(
 # Server
 # -----------------------------
 server <- function(input, output, session) {
+  live_file_cache <- reactiveValues()
   
   file_index <- reactiveVal(empty_file_index())
   
-  refresh_index <- function() file_index(build_file_index(DATA_DIR))
-  observe({ refresh_index() })
+  refresh_index <- function() {
+    keys <- names(reactiveValuesToList(live_file_cache))
+    for (k in keys) live_file_cache[[k]] <- NULL
+    
+    idx <- build_file_index()
+    idx$path <- vapply(seq_len(nrow(idx)), function(i) {
+      get_live_file(idx$station_key[i], idx$file[i], live_file_cache)
+    }, character(1))
+    
+    file_index(idx)
+  }
+  
+  observeEvent(TRUE, { refresh_index() }, once = TRUE)
   observeEvent(input$refresh, { refresh_index() })
   
   # strict dropdown builders (base subsetting)
@@ -341,13 +437,17 @@ server <- function(input, output, session) {
     updateSelectInput(session, "product_b", choices = ch, selected = ch[[1]])
   }, ignoreInit = FALSE)
   
-  selected_path <- function(site_type_arg, site_key_arg, product_arg) {
+  selected_path <- function(site_type, site_key, product) {
     idx <- file_index()
-    idx <- idx[idx$site_type == site_type_arg &
-                 idx$site_key == site_key_arg &
-                 idx$product == product_arg, , drop = FALSE]
-    if (nrow(idx) == 0) return(character(0))
-    idx$path[[1]]
+    
+    sub <- idx %>%
+      filter(site_type == !!site_type,
+             site_key == !!site_key,
+             product == !!product)
+    
+    if (nrow(sub) > 0) return(sub$path[[1]])
+    
+    character(0)
   }
   
   load_site <- function(site_type_arg, site_key_arg, product_arg) {
@@ -437,18 +537,25 @@ server <- function(input, output, session) {
   
   # plot factory
   make_plot <- function(df, var, title) {
-    req(nrow(df) > 0, var %in% names(df))
-    type <- if (var == "precip_mm") "bar" else "scatter"
-    mode <- if (var == "precip_mm") NULL else "lines"
+    req(is.data.frame(df), nrow(df) > 0, var %in% names(df))
     
-    plot_ly(df, x = ~datetime, y = df[[var]], type = type, mode = mode) %>%
-      layout(
+    # Rename the target column to a safe placeholder to avoid any scoping issues
+    df$plot_y <- df[[var]]
+    
+    if (var == "precip_mm") {
+      p <- plotly::plot_ly(df, x = ~datetime, y = ~plot_y, type = "bar")
+    } else {
+      p <- plotly::plot_ly(df, x = ~datetime, y = ~plot_y, type = "scatter", mode = "lines")
+    }
+    
+    p %>%
+      plotly::layout(
         title = list(text = title),
         xaxis = list(title = "", rangeslider = list(visible = TRUE)),
-        yaxis = list(title = ""),
+        yaxis = list(title = var),
         margin = list(l = 60, r = 20, b = 50, t = 60)
       ) %>%
-      config(displaylogo = FALSE, modeBarButtonsToRemove = c("toImage", "sendDataToCloud"))
+      plotly::config(displaylogo = FALSE, modeBarButtonsToRemove = c("toImage", "sendDataToCloud"))
   }
   
   # UI for plots (compare vs single stacked)
@@ -500,7 +607,6 @@ server <- function(input, output, session) {
     req(!isTRUE(input$compare))
     req(input$vars_single)
     
-    df <- filtered_a()
     vars <- input$vars_single
     
     lapply(seq_along(vars), function(i) {
@@ -509,7 +615,8 @@ server <- function(input, output, session) {
         v <- vars[[ii]]
         
         output[[paste0("plot_single_", ii)]] <- renderPlotly({
-          req(v %in% names(df))
+          df <- filtered_a()  # ← moved inside renderPlotly so it's reactive
+          req(nrow(df) > 0, v %in% names(df))
           base_ttl <- paste0(unique(df$site_display), " | ", unique(df$product_display))
           make_plot(df, v, paste0(base_ttl, " | ", v))
         })
