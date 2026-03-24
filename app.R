@@ -382,7 +382,7 @@ plot_soil_multi <- function(df, depths_on = c("10","30","50"),
 # UI
 # -----------------------------
 ui <- fluidPage(
-  titlePanel("Hubbard Brook Live Viewer"),
+  titlePanel("Hubbard Brook Live Viewer Prototype"),
   sidebarLayout(
     sidebarPanel(
       actionButton("refresh", "Refresh data"),
