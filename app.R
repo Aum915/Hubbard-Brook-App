@@ -9,37 +9,25 @@ library(httr)
 # Accessing credentials
 # -----------------------------
 station_keys <- c(
-  "kineo",
-  "snow2",
-  "snow19",
-  "weir3",
-  "weir9",
-  "temp1",
-  "temp23",
-  "rain1",
-  "rain23"
+  "kineo", "snow2", "snow19", "weir3", "weir9",
+  "temp1", "temp23", "rain1", "rain23"
 )
 
 get_station_config <- function() {
   cfg <- lapply(station_keys, function(key) {
-    
     key_upper <- toupper(key)
-    
     list(
       user = Sys.getenv(paste0(key_upper, "_USER")),
       pass = Sys.getenv(paste0(key_upper, "_PW")),
       url  = Sys.getenv(paste0(key_upper, "_URL"))
     )
-    
   })
-  
   names(cfg) <- station_keys
   cfg
 }
 
 station_config <- get_station_config()
 
-# safety check
 missing_cfg <- sapply(station_config, function(x)
   x$user == "" || x$pass == "" || x$url == "")
 
@@ -50,110 +38,45 @@ if (any(missing_cfg)) {
 DATA_DIR <- "."
 
 # -----------------------------
-# Aspect mapping (override headers)
+# Weir basin areas (km^2)
 # -----------------------------
-ASPECT_LOOKUP <- tibble::tribble(
-  ~site_type, ~site_id, ~aspect,
-  "weir", "3", "North",
-  "weir", "9", "South"
+WEIR_AREA_KM2 <- c(
+  "3" = 0.424,
+  "9" = 0.684
 )
 
-infer_aspect_vec <- function(site_type_vec, site_id_vec) {
-  key <- paste0(site_type_vec, ":", site_id_vec)
-  map <- ASPECT_LOOKUP %>%
-    mutate(key = paste0(site_type, ":", site_id)) %>%
-    select(key, aspect)
-  out <- map$aspect[match(key, map$key)]
-  out[is.na(out)] <- "Unknown"
-  out
-}
-
 # -----------------------------
-# Pretty labels
-# -----------------------------
-SITE_TYPE_CHOICES <- c(
-  "Weir" = "weir",
-  "Water station" = "wxsta",
-  "Snowcourse" = "snowcourse",
-  "Kineo Tower" = "kineo"
-)
-
-product_label <- function(site_type, product) {
-  if (site_type == "weir" && product == "stream") return("Stream discharge & stage")
-  if (site_type == "wxsta" && product == "precip") return("Precipitation")
-  if (site_type == "wxsta" && product == "air_temp_15min") return("Air temperature (15-min)")
-  if (site_type == "wxsta" && product == "air_temp") return("Air temperature")
-  if (site_type == "snowcourse" && product == "snowpack") return("Snow depth & SWE")
-  if (site_type == "snowcourse" && product == "soil") return("Soil moisture (Typical)")
-  if (site_type == "kineo" && product == "wind") return("Wind")
-  str_to_sentence(product)
-}
-
-# -----------------------------
-# Downloading live files
+# Downloading / caching live files
 # -----------------------------
 download_live_file <- function(station_key, file_name) {
-  
   cfg <- station_config[[station_key]]
   if (is.null(cfg)) return(NA_character_)
   
-  # use the full URL from .Renviron directly
-  url <- cfg$url
-  
   tmp <- tempfile(fileext = ".dat")
-  
   res <- tryCatch(
-    httr::GET(url, httr::authenticate(cfg$user, cfg$pass, type = "basic")),
+    httr::GET(cfg$url, httr::authenticate(cfg$user, cfg$pass, type = "basic")),
     error = function(e) {
       message("Request failed for ", station_key, ": ", e$message)
-      return(NULL)
+      NULL
     }
   )
-  
   if (is.null(res)) return(NA_character_)
-  
   if (httr::status_code(res) != 200) {
     message("Failed to download ", station_key, " (status ", httr::status_code(res), ")")
     return(NA_character_)
   }
-  
   writeBin(httr::content(res, "raw"), tmp)
   tmp
 }
 
-# -----------------------------
-# Getting live files
-# -----------------------------
 get_live_file <- function(station_key, file_name, live_file_cache = NULL) {
-  
   key <- paste(station_key, file_name, sep = "_")
-  
-  # if a reactive cache is provided (inside server), use it
   if (!is.null(live_file_cache) && !is.null(live_file_cache[[key]])) {
     return(live_file_cache[[key]])
   }
-  
   tmp <- download_live_file(station_key, file_name)
-  
-  if (!is.null(live_file_cache)) {
-    live_file_cache[[key]] <- tmp
-  }
-  
+  if (!is.null(live_file_cache)) live_file_cache[[key]] <- tmp
   tmp
-}
-
-# -----------------------------
-# Soil (LIMITED): Typical VWC only at 10/30/50 cm
-# -----------------------------
-make_soil_vwc_typ_choices <- function(df) {
-  choices <- c()
-  add <- function(col, label) {
-    if (col %in% names(df)) choices <<- c(choices, setNames(col, label))
-  }
-  add("TDR_10typ_vwc", "Soil moisture (VWC %) — 10 cm (Typical)")
-  add("TDR_30typ_vwc", "Soil moisture (VWC %) — 30 cm (Typical)")
-  add("TDR_50typ_vwc", "Soil moisture (VWC %) — 50 cm (Typical)")
-  choices
 }
 
 # -----------------------------
@@ -161,39 +84,31 @@ make_soil_vwc_typ_choices <- function(df) {
 # -----------------------------
 empty_file_index <- function() {
   tibble(
-    path = character(),
-    file = character(),
-    file_l = character(),
-    station_key = character(),
-    site_type = character(),
-    site_id = character(),
-    site_key = character(),
-    aspect = character(),
-    site_display = character(),
-    product = character(),
-    product_display = character()
+    path = character(), file = character(), file_l = character(),
+    station_key = character(), site_type = character(), site_id = character(),
+    site_key = character(), site_display = character(),
+    product = character(), product_display = character()
   )
 }
 
+product_label <- function(site_type, product) {
+  if (site_type == "weir"       && product == "stream")        return("Stream discharge & stage")
+  if (site_type == "wxsta"      && product == "precip")        return("Precipitation")
+  if (site_type == "wxsta"      && product == "air_temp_15min") return("Air temperature (15-min)")
+  if (site_type == "snowcourse" && product == "snowpack")      return("Snow depth & SWE")
+  if (site_type == "snowcourse" && product == "soil")          return("Soil moisture (Typical)")
+  if (site_type == "kineo"      && product == "wind")          return("Wind")
+  str_to_sentence(product)
+}
+
 build_file_index <- function() {
-  
   tibble(
-    station_key = c(
-      "kineo", "snow2", "snow19", "weir3", "weir9",
-      "temp1", "temp23", "rain1", "rain23"
-    ),
-    site_type = c(
-      "kineo", "snowcourse", "snowcourse", "weir", "weir",
-      "wxsta", "wxsta", "wxsta", "wxsta"
-    ),
-    site_id = c(
-      NA, "2", "19", "3", "9", "1", "23", "1", "23"
-    ),
-    product = c(
-      "wind", "snowpack", "snowpack", "stream", "stream",
-      "air_temp_15min", "air_temp_15min", "precip", "precip"
-    ),
-    file_name = c(
+    station_key = c("kineo","snow2","snow19","weir3","weir9","temp1","temp23","rain1","rain23"),
+    site_type   = c("kineo","snowcourse","snowcourse","weir","weir","wxsta","wxsta","wxsta","wxsta"),
+    site_id     = c(NA,"2","19","3","9","1","23","1","23"),
+    product     = c("wind","snowpack","snowpack","stream","stream",
+                    "air_temp_15min","air_temp_15min","precip","precip"),
+    file_name   = c(
       "Kineo_Tower_Kineo.dat",
       "Snowcourse_2_SS2-snowdat.dat",
       "Snowcourse_19_SS19_soildat.dat",
@@ -207,25 +122,41 @@ build_file_index <- function() {
   ) %>%
     rowwise() %>%
     mutate(
-      # path will be filled in the server per-session
       path = NA_character_,
       site_key = case_when(
         site_type == "kineo" ~ "kineo_tower",
         TRUE ~ paste0(site_type, site_id)
       ),
       site_display = case_when(
-        site_type == "kineo" ~ "Kineo Tower",
+        site_type == "kineo"      ~ "Kineo Tower",
         site_type == "snowcourse" ~ paste0("Snowcourse ", site_id),
-        site_type == "weir" ~ paste0("Weir ", site_id),
-        site_type == "wxsta" ~ paste0("Weather station ", site_id)
+        site_type == "weir"       ~ paste0("Weir ", site_id),
+        site_type == "wxsta"      ~ paste0("Weather station ", site_id)
       ),
       product_display = product_label(site_type, product)
     ) %>%
     ungroup() %>%
-    select(
-      path, file = file_name, file_l = file_name, station_key, site_type, site_id, 
-      site_key, site_display, product, product_display
-    )
+    select(path, file = file_name, file_l = file_name, station_key,
+           site_type, site_id, site_key, site_display, product, product_display)
+}
+
+# -----------------------------
+# Aspect selection logic
+# -----------------------------
+pick_site_for_aspect <- function(idx, site_type, aspect) {
+  sub <- idx %>% filter(site_type == !!site_type, !is.na(site_id))
+  if (nrow(sub) == 0) return(character(0))
+  ids_num <- suppressWarnings(as.numeric(sub$site_id))
+  if (all(is.na(ids_num))) return(character(0))
+  if (aspect == "South") {
+    target <- min(ids_num, na.rm = TRUE)
+  } else {
+    target <- max(ids_num, na.rm = TRUE)
+  }
+  sub %>%
+    filter(suppressWarnings(as.numeric(site_id)) == target) %>%
+    slice(1) %>%
+    pull(site_key)
 }
 
 # -----------------------------
@@ -238,7 +169,7 @@ read_toa5_table <- function(path, tz = "America/New_York") {
   skip_n <- 4
   
   if (!any(toupper(col_names) == "TIMESTAMP")) {
-    lines <- readLines(path, n = 80, warn = FALSE)
+    lines <- readLines(path, n = 120, warn = FALSE)
     header_idx <- which(grepl("^\"?TIMESTAMP\"?,", lines, ignore.case = TRUE))[1]
     if (is.na(header_idx)) stop("Could not find TIMESTAMP header row in: ", path)
     col_names <- gsub('"', "", lines[header_idx])
@@ -246,16 +177,9 @@ read_toa5_table <- function(path, tz = "America/New_York") {
     skip_n <- header_idx + 2
   }
   
-  df <- read.table(
-    path,
-    sep = ",",
-    header = FALSE,
-    skip = skip_n,
-    col.names = col_names,
-    fill = TRUE,
-    stringsAsFactors = FALSE,
-    quote = "\""
-  ) %>% as_tibble()
+  df <- read.table(path, sep = ",", header = FALSE, skip = skip_n,
+                   col.names = col_names, fill = TRUE,
+                   stringsAsFactors = FALSE, quote = "\"") %>% as_tibble()
   
   if (!("TIMESTAMP" %in% names(df))) stop("TIMESTAMP missing after read: ", path)
   
@@ -265,63 +189,82 @@ read_toa5_table <- function(path, tz = "America/New_York") {
 }
 
 # -----------------------------
-# Standardization
+# Column picking helper
 # -----------------------------
 pick_first_existing <- function(df, candidates) {
   hit <- candidates[candidates %in% names(df)]
   if (length(hit) == 0) NA_character_ else hit[1]
 }
 
-standardize_dataset <- function(df, site_type, product) {
+# -----------------------------
+# Standardization
+# -----------------------------
+standardize_dataset <- function(df, site_type, product, site_id = NA_character_) {
   out <- df %>% select(datetime, everything())
   
   if (site_type == "weir" && product == "stream") {
+    q_col     <- pick_first_existing(out, c("pressure1_Q","Q","Discharge","discharge_cfs"))
+    stage_col <- pick_first_existing(out, c("float_stage","pressure1_stage",
+                                            "pressure1_rawdepth","stage","Stage"))
     out <- out %>%
       mutate(
-        discharge_cfs = suppressWarnings(as.numeric(pressure1_Q)),
-        stage_ft = coalesce(
-          suppressWarnings(as.numeric(float_stage)),
-          suppressWarnings(as.numeric(pressure1_stage)),
-          suppressWarnings(as.numeric(pressure1_rawdepth))
-        ),
-        stage_m = stage_ft * 0.3048
+        discharge_cfs = if (!is.na(q_col)) suppressWarnings(as.numeric(.data[[q_col]])) else NA_real_,
+        stage_ft      = if (!is.na(stage_col)) suppressWarnings(as.numeric(.data[[stage_col]])) else NA_real_,
+        stage_m       = stage_ft * 0.3048
+      )
+    area_km2 <- WEIR_AREA_KM2[[as.character(site_id)]]
+    if (is.null(area_km2) || is.na(area_km2)) area_km2 <- NA_real_
+    out <- out %>%
+      mutate(
+        discharge_mm_day = if (is.na(area_km2)) NA_real_ else {
+          area_m2 <- area_km2 * 1e6
+          q_m3s   <- discharge_cfs * 0.028316846592
+          (q_m3s / area_m2) * 86400 * 1000
+        }
       )
   }
   
   if (site_type == "wxsta" && product == "precip") {
-    out <- out %>% mutate(precip_mm = suppressWarnings(as.numeric(ReportPCP)))
+    p_col <- pick_first_existing(out, c("ReportPCP","Precip","precip","Rain","rain"))
+    out <- out %>%
+      mutate(precip_mm = if (!is.na(p_col)) suppressWarnings(as.numeric(.data[[p_col]])) else NA_real_)
   }
   
-  if (site_type == "wxsta" && product %in% c("air_temp_15min", "air_temp")) {
-    air_candidates <- c("RH_airtemp", "Air_TempC_Avg", "AirTC", "Ta", "air_temp", "ActTemp")
-    air_col <- pick_first_existing(out, air_candidates)
+  if (site_type == "wxsta" && product %in% c("air_temp_15min","air_temp")) {
+    t_col <- pick_first_existing(out, c("Air_TempC_Avg","RH_airtemp","ActTemp","AirTC","Ta"))
     out <- out %>%
-      mutate(air_temp_c = if (!is.na(air_col)) suppressWarnings(as.numeric(.data[[air_col]])) else NA_real_)
+      mutate(air_temp_c = if (!is.na(t_col)) suppressWarnings(as.numeric(.data[[t_col]])) else NA_real_)
   }
   
   if (site_type == "snowcourse" && product == "snowpack") {
+    d_col <- pick_first_existing(out, c("Depthscaled","SnowDepth","snow_depth"))
+    s_col <- pick_first_existing(out, c("SWE","swe"))
     out <- out %>%
       mutate(
-        snow_depth_cm = if ("Depthscaled" %in% names(out)) suppressWarnings(as.numeric(Depthscaled)) else NA_real_,
-        swe_cm = if ("SWE" %in% names(out)) suppressWarnings(as.numeric(SWE)) else NA_real_
+        snow_depth_cm = if (!is.na(d_col)) suppressWarnings(as.numeric(.data[[d_col]])) else NA_real_,
+        swe_cm        = if (!is.na(s_col)) suppressWarnings(as.numeric(.data[[s_col]])) else NA_real_
       )
   }
   
-  # ---- Kineo wind: auto-detect common columns and standardize ----
-  if (site_type == "kineo" && product == "wind") {
-    # common possibilities across Campbell/TOA5 exports
-    spd_candidates <- c("WindSpd", "Wind_Spd", "WS", "WS_ms", "WS_mps", "WindSpeed", "Wind_Speed",
-                        "WS_Avg", "WindSpd_Avg", "WindSpd_ms", "WindSpd_mps")
-    dir_candidates <- c("WindDir", "Wind_Dir", "WD", "WD_deg", "WindDirection", "Wind_Direction",
-                        "WD_Avg", "WindDir_Avg")
-    
-    spd_col <- pick_first_existing(out, spd_candidates)
-    dir_col <- pick_first_existing(out, dir_candidates)
-    
+  if (site_type == "snowcourse" && product == "soil") {
     out <- out %>%
       mutate(
-        wind_speed = if (!is.na(spd_col)) suppressWarnings(as.numeric(.data[[spd_col]])) else NA_real_,
-        wind_dir   = if (!is.na(dir_col)) suppressWarnings(as.numeric(.data[[dir_col]])) else NA_real_
+        vwc_10 = if ("TDR_10typ_vwc" %in% names(out)) suppressWarnings(as.numeric(TDR_10typ_vwc)) else NA_real_,
+        vwc_30 = if ("TDR_30typ_vwc" %in% names(out)) suppressWarnings(as.numeric(TDR_30typ_vwc)) else NA_real_,
+        vwc_50 = if ("TDR_50typ_vwc" %in% names(out)) suppressWarnings(as.numeric(TDR_50typ_vwc)) else NA_real_
+      )
+  }
+  
+  if (site_type == "kineo" && product == "wind") {
+    avg_col <- pick_first_existing(out, c("WS_ms_Avg","WS_Avg","WindSpd_Avg","WindSpd","WS"))
+    max_col <- pick_first_existing(out, c("WS_ms_Max","WS_Max","WindSpd_Max"))
+    dir_col <- pick_first_existing(out, c("WindDir","Wind_Dir","WD","WD_deg",
+                                          "WindDirection","Wind_Direction","WD_Avg","WindDir_Avg"))
+    out <- out %>%
+      mutate(
+        wind_speed_avg = if (!is.na(avg_col)) suppressWarnings(as.numeric(.data[[avg_col]])) else NA_real_,
+        wind_speed_max = if (!is.na(max_col)) suppressWarnings(as.numeric(.data[[max_col]])) else NA_real_,
+        wind_dir_deg   = if (!is.na(dir_col)) suppressWarnings(as.numeric(.data[[dir_col]])) else NA_real_
       )
   }
   
@@ -329,37 +272,157 @@ standardize_dataset <- function(df, site_type, product) {
 }
 
 # -----------------------------
+# Keep only plot-relevant columns (prevents bind_rows type errors)
+# -----------------------------
+keep_plot_cols <- function(df, site_type, product) {
+  if (is.null(df)) return(df)
+  cols <- "datetime"
+  if (site_type == "weir" && product == "stream")
+    cols <- c(cols, "discharge_cfs", "discharge_mm_day", "stage_m")
+  if (site_type == "wxsta" && product == "precip")
+    cols <- c(cols, "precip_mm")
+  if (site_type == "wxsta" && product %in% c("air_temp_15min","air_temp"))
+    cols <- c(cols, "air_temp_c")
+  if (site_type == "snowcourse" && product == "snowpack")
+    cols <- c(cols, "snow_depth_cm", "swe_cm")
+  if (site_type == "snowcourse" && product == "soil")
+    cols <- c(cols, "vwc_10", "vwc_30", "vwc_50")
+  if (site_type == "kineo" && product == "wind")
+    cols <- c(cols, "wind_speed_avg", "wind_speed_max", "wind_dir_deg")
+  df %>% select(any_of(cols))
+}
+
+# -----------------------------
+# Daily cumulative precip helper
+# -----------------------------
+make_daily_cum_precip <- function(df) {
+  if (is.null(df) || nrow(df) == 0) return(df)
+  df %>%
+    mutate(day = as.Date(datetime)) %>%
+    arrange(series_label, day, datetime) %>%
+    group_by(series_label, day) %>%
+    mutate(
+      precip_mm_clean    = replace_na(precip_mm, 0),
+      precip_cum_day_mm  = cumsum(precip_mm_clean)
+    ) %>%
+    ungroup()
+}
+
+# -----------------------------
+# Plot helpers
+# -----------------------------
+base_plot_cfg <- function(p) {
+  p %>% plotly::config(displaylogo = FALSE,
+                       modeBarButtonsToRemove = c("sendDataToCloud","toImage"))
+}
+
+plot_lines_multi <- function(df, y, title, ylab, source_id) {
+  req(nrow(df) > 0, y %in% names(df))
+  p <- plotly::plot_ly(source = source_id) %>%
+    plotly::layout(
+      title  = list(text = title),
+      xaxis  = list(title = "", rangeslider = list(visible = FALSE)),
+      yaxis  = list(title = ylab),
+      legend = list(orientation = "h", x = 0, y = -0.25),
+      margin = list(l = 70, r = 20, b = 95, t = 60)
+    )
+  for (lab in unique(df$series_label)) {
+    sub <- df %>% filter(series_label == lab)
+    p <- plotly::add_lines(p, data = sub, x = ~datetime, y = sub[[y]], name = lab)
+  }
+  base_plot_cfg(p)
+}
+
+plot_bars_multi <- function(df, y, title, ylab, source_id) {
+  req(nrow(df) > 0, y %in% names(df))
+  p <- plotly::plot_ly(source = source_id) %>%
+    plotly::layout(
+      title   = list(text = title),
+      xaxis   = list(title = "", rangeslider = list(visible = FALSE)),
+      yaxis   = list(title = ylab),
+      barmode = "overlay",
+      legend  = list(orientation = "h", x = 0, y = -0.25),
+      margin  = list(l = 70, r = 20, b = 95, t = 60)
+    )
+  for (lab in unique(df$series_label)) {
+    sub <- df %>% filter(series_label == lab)
+    p <- plotly::add_bars(p, data = sub, x = ~datetime, y = sub[[y]],
+                          name = lab, opacity = 0.6)
+  }
+  base_plot_cfg(p)
+}
+
+plot_soil_multi <- function(df, depths_on = c("10","30","50"),
+                            title = "Soil moisture (Typical)", source_id) {
+  req(nrow(df) > 0)
+  p <- plotly::plot_ly(source = source_id) %>%
+    plotly::layout(
+      title  = list(text = title),
+      xaxis  = list(title = "", rangeslider = list(visible = FALSE)),
+      yaxis  = list(title = "Volumetric Water Content (VWC %)"),
+      legend = list(orientation = "h", x = 0, y = -0.25),
+      margin = list(l = 70, r = 20, b = 95, t = 60)
+    )
+  for (lab in unique(df$series_label)) {
+    sub <- df %>% filter(series_label == lab)
+    if ("10" %in% depths_on && "vwc_10" %in% names(sub))
+      p <- plotly::add_lines(p, data = sub, x = ~datetime, y = ~vwc_10,
+                             name = paste0(lab, " — 10 cm"))
+    if ("30" %in% depths_on && "vwc_30" %in% names(sub))
+      p <- plotly::add_lines(p, data = sub, x = ~datetime, y = ~vwc_30,
+                             name = paste0(lab, " — 30 cm"))
+    if ("50" %in% depths_on && "vwc_50" %in% names(sub))
+      p <- plotly::add_lines(p, data = sub, x = ~datetime, y = ~vwc_50,
+                             name = paste0(lab, " — 50 cm"))
+  }
+  base_plot_cfg(p)
+}
+
+# -----------------------------
 # UI
 # -----------------------------
 ui <- fluidPage(
-  titlePanel("Hubbard Brook Viewer (Static TOA5 Prototype)"),
+  titlePanel("Hubbard Brook Live Viewer"),
   sidebarLayout(
     sidebarPanel(
-      actionButton("refresh", "Refresh file list"),
+      actionButton("refresh", "Refresh data"),
       hr(),
-      checkboxInput("compare", "Compare two sites (side-by-side)", value = FALSE),
-      
-      h4("Site A"),
-      selectInput("site_type_a", "Site type", choices = SITE_TYPE_CHOICES, selected = "weir"),
-      selectInput("site_a", "Site", choices = character(0)),
-      selectInput("product_a", "Data product", choices = character(0)),
-      
-      hr(),
-      conditionalPanel(
-        condition = "input.compare == true",
-        h4("Site B"),
-        selectInput("site_type_b", "Site type", choices = SITE_TYPE_CHOICES, selected = "weir"),
-        selectInput("site_b", "Site", choices = character(0)),
-        selectInput("product_b", "Data product", choices = character(0))
+      selectInput(
+        "aspect", "Aspect",
+        choices  = c("South-facing" = "South", "North-facing" = "North", "Show both" = "Both"),
+        selected = "South"
       ),
-      
+      dateRangeInput("date_range", "Date range",
+                     start = Sys.Date() - 30, end = Sys.Date()),
       hr(),
-      dateRangeInput("date_range", "Date range", start = Sys.Date() - 30, end = Sys.Date()),
-      uiOutput("var_ui_mode"),
+      checkboxGroupInput(
+        "graphs_on", "Graphs to show",
+        choices = c(
+          "Stream discharge (cfs)"           = "discharge",
+          "Stream discharge (mm/day)"        = "discharge_mmday",
+          "Stage height"                     = "stage",
+          "Precipitation"                    = "precip",
+          "Cumulative daily precipitation"   = "precip_cum_day",
+          "Air temperature"                  = "airtemp",
+          "Snow depth"                       = "snowdepth",
+          "Wind speed (avg/max)"             = "wind_speed",
+          "Wind direction"                   = "wind_dir",
+          "Soil moisture (10/30/50 cm)"      = "soil"
+        ),
+        selected = c("discharge","stage","precip","airtemp")
+      ),
+      conditionalPanel(
+        condition = "input.graphs_on.indexOf('soil') >= 0",
+        checkboxGroupInput(
+          "soil_depths", "Soil depths",
+          choices  = c("10 cm" = "10", "30 cm" = "30", "50 cm" = "50"),
+          selected = c("10","30","50")
+        )
+      ),
       hr(),
       verbatimTextOutput("status")
     ),
-    mainPanel(uiOutput("dynamic_plots"))
+    mainPanel(uiOutput("plots_ui"))
   )
 )
 
@@ -367,9 +430,9 @@ ui <- fluidPage(
 # Server
 # -----------------------------
 server <- function(input, output, session) {
-  live_file_cache <- reactiveValues()
   
-  file_index <- reactiveVal(empty_file_index())
+  live_file_cache <- reactiveValues()
+  file_index      <- reactiveVal(empty_file_index())
   
   refresh_index <- function() {
     keys <- names(reactiveValuesToList(live_file_cache))
@@ -386,249 +449,273 @@ server <- function(input, output, session) {
   observeEvent(TRUE, { refresh_index() }, once = TRUE)
   observeEvent(input$refresh, { refresh_index() })
   
-  # strict dropdown builders (base subsetting)
-  site_choices <- function(site_type) {
+  # ---- Aspect → site keys ----
+  aspect_sites <- reactive({
     idx <- file_index()
-    idx <- idx[idx$site_type == site_type, , drop = FALSE]
-    if (nrow(idx) == 0) return(setNames(character(0), character(0)))
-    sites <- idx %>% distinct(site_key, site_display) %>% arrange(site_display)
-    setNames(sites$site_key, sites$site_display)
-  }
+    if (input$aspect == "Both") {
+      list(
+        weir  = c(South = pick_site_for_aspect(idx, "weir",       "South"),
+                  North = pick_site_for_aspect(idx, "weir",       "North")),
+        wx    = c(South = pick_site_for_aspect(idx, "wxsta",      "South"),
+                  North = pick_site_for_aspect(idx, "wxsta",      "North")),
+        snow  = c(South = pick_site_for_aspect(idx, "snowcourse", "South"),
+                  North = pick_site_for_aspect(idx, "snowcourse", "North")),
+        kineo = "kineo_tower"
+      )
+    } else {
+      list(
+        weir  = c(Selected = pick_site_for_aspect(idx, "weir",       input$aspect)),
+        wx    = c(Selected = pick_site_for_aspect(idx, "wxsta",      input$aspect)),
+        snow  = c(Selected = pick_site_for_aspect(idx, "snowcourse", input$aspect)),
+        kineo = "kineo_tower"
+      )
+    }
+  })
   
-  product_choices <- function(site_type, site_key) {
-    idx <- file_index()
-    idx <- idx[idx$site_type == site_type & idx$site_key == site_key, , drop = FALSE]
-    if (nrow(idx) == 0) return(setNames(character(0), character(0)))
-    prods <- idx %>% distinct(product, product_display) %>% arrange(product_display)
-    setNames(prods$product, prods$product_display)
-  }
-  
-  # Site A dropdown updates
-  observeEvent(list(file_index(), input$site_type_a), {
-    updateSelectInput(session, "site_a", choices = character(0), selected = character(0))
-    updateSelectInput(session, "product_a", choices = character(0), selected = character(0))
-    ch <- site_choices(input$site_type_a)
-    req(length(ch) > 0)
-    updateSelectInput(session, "site_a", choices = ch, selected = ch[[1]])
-  }, ignoreInit = FALSE)
-  
-  observeEvent(list(file_index(), input$site_type_a, input$site_a), {
-    req(nzchar(input$site_a))
-    updateSelectInput(session, "product_a", choices = character(0), selected = character(0))
-    ch <- product_choices(input$site_type_a, input$site_a)
-    req(length(ch) > 0)
-    updateSelectInput(session, "product_a", choices = ch, selected = ch[[1]])
-  }, ignoreInit = FALSE)
-  
-  # Site B dropdown updates
-  observeEvent(list(file_index(), input$site_type_b), {
-    updateSelectInput(session, "site_b", choices = character(0), selected = character(0))
-    updateSelectInput(session, "product_b", choices = character(0), selected = character(0))
-    ch <- site_choices(input$site_type_b)
-    req(length(ch) > 0)
-    updateSelectInput(session, "site_b", choices = ch, selected = ch[[1]])
-  }, ignoreInit = FALSE)
-  
-  observeEvent(list(file_index(), input$site_type_b, input$site_b), {
-    req(nzchar(input$site_b))
-    updateSelectInput(session, "product_b", choices = character(0), selected = character(0))
-    ch <- product_choices(input$site_type_b, input$site_b)
-    req(length(ch) > 0)
-    updateSelectInput(session, "product_b", choices = ch, selected = ch[[1]])
-  }, ignoreInit = FALSE)
-  
+  # ---- Path lookup ----
   selected_path <- function(site_type, site_key, product) {
     idx <- file_index()
-    
-    sub <- idx %>%
-      filter(site_type == !!site_type,
-             site_key == !!site_key,
-             product == !!product)
-    
+    sub <- idx %>% filter(site_type == !!site_type,
+                          site_key  == !!site_key,
+                          product   == !!product)
     if (nrow(sub) > 0) return(sub$path[[1]])
-    
     character(0)
   }
   
-  load_site <- function(site_type_arg, site_key_arg, product_arg) {
-    p <- selected_path(site_type_arg, site_key_arg, product_arg)
-    req(length(p) == 1, file.exists(p))
-    
-    df <- read_toa5_table(p)
-    df2 <- standardize_dataset(df, site_type_arg, product_arg)
-    
-    meta <- file_index()
-    meta <- meta[meta$site_type == site_type_arg &
-                   meta$site_key == site_key_arg &
-                   meta$product == product_arg, , drop = FALSE]
-    meta <- meta[1, , drop = FALSE]
-    
-    df2 %>%
-      mutate(
-        site_display = meta$site_display,
-        product_display = meta$product_display,
-        site_type = site_type_arg,
-        product = product_arg
-      )
+  site_id_from_key <- function(site_key) {
+    if (is.na(site_key) || !nzchar(site_key) || site_key == "kineo_tower")
+      return(NA_character_)
+    str_match(site_key, "^(weir|wxsta|snowcourse)(\\d+)$")[, 3]
   }
   
-  data_a <- reactive({
-    req(input$site_type_a, input$site_a, input$product_a)
-    load_site(input$site_type_a, input$site_a, input$product_a)
-  })
+  # ---- Load one dataset ----
+  load_one <- function(site_type, site_key, product, label) {
+    p <- selected_path(site_type, site_key, product)
+    if (length(p) != 1 || is.na(p) || !file.exists(p)) return(NULL)
+    df  <- read_toa5_table(p)
+    sid <- site_id_from_key(site_key)
+    df  <- standardize_dataset(df, site_type, product, site_id = sid)
+    df  <- keep_plot_cols(df, site_type, product)
+    df$series_label <- label
+    df
+  }
   
-  data_b <- reactive({
-    req(input$compare, input$site_type_b, input$site_b, input$product_b)
-    load_site(input$site_type_b, input$site_b, input$product_b)
-  })
-  
-  # ---- Variable UI: compare=single select, single-site=checkboxes ----
-  output$var_ui_mode <- renderUI({
-    df <- data_a()
-    st <- isolate(input$site_type_a)
-    pr <- isolate(input$product_a)
+  # ---- Datasets reactive ----
+  datasets <- reactive({
+    s     <- aspect_sites()
+    kineo <- load_one("kineo", s$kineo, "wind", "Kineo Tower")
     
-    # Soil: only Typical VWC at 10/30/50
-    if (st == "snowcourse" && pr == "soil") {
-      var_choices <- make_soil_vwc_typ_choices(df)
-      if (length(var_choices) == 0) return(helpText("No typical VWC columns found (expected TDR_10typ_vwc etc.)."))
+    if (input$aspect == "Both") {
+      list(
+        weir     = bind_rows(load_one("weir",       s$weir[["South"]], "stream",        "South-facing"),
+                             load_one("weir",       s$weir[["North"]], "stream",        "North-facing")),
+        precip   = bind_rows(load_one("wxsta",      s$wx[["South"]],   "precip",        "South-facing"),
+                             load_one("wxsta",      s$wx[["North"]],   "precip",        "North-facing")),
+        airtemp  = bind_rows(load_one("wxsta",      s$wx[["South"]],   "air_temp_15min","South-facing"),
+                             load_one("wxsta",      s$wx[["North"]],   "air_temp_15min","North-facing")),
+        snowpack = bind_rows(load_one("snowcourse", s$snow[["South"]], "snowpack",      "South-facing"),
+                             load_one("snowcourse", s$snow[["North"]], "snowpack",      "North-facing")),
+        soil     = bind_rows(load_one("snowcourse", s$snow[["South"]], "soil",          "South-facing"),
+                             load_one("snowcourse", s$snow[["North"]], "soil",          "North-facing")),
+        kineo    = kineo
+      )
     } else {
-      var_choices <- c()
-      if ("discharge_cfs" %in% names(df)) var_choices <- c(var_choices, "Discharge (cfs)" = "discharge_cfs")
-      if ("stage_m" %in% names(df))      var_choices <- c(var_choices, "Stage height (m)" = "stage_m")
-      if ("precip_mm" %in% names(df))    var_choices <- c(var_choices, "Precipitation (mm per interval)" = "precip_mm")
-      if ("air_temp_c" %in% names(df))   var_choices <- c(var_choices, "Air temperature (°C)" = "air_temp_c")
-      if ("snow_depth_cm" %in% names(df)) var_choices <- c(var_choices, "Snow depth (cm)" = "snow_depth_cm")
-      if ("swe_cm" %in% names(df))        var_choices <- c(var_choices, "Snow water equivalent (cm)" = "swe_cm")
-      
-      # Kineo wind
-      if ("wind_speed" %in% names(df)) var_choices <- c(var_choices, "Wind speed" = "wind_speed")
-      if ("wind_dir" %in% names(df))   var_choices <- c(var_choices, "Wind direction (deg)" = "wind_dir")
-    }
-    
-    if (length(var_choices) == 0) return(helpText("No plottable variables found for this dataset."))
-    
-    if (isTRUE(input$compare)) {
-      selectInput("var_select", "Variable", choices = var_choices, selected = var_choices[[1]])
-    } else {
-      checkboxGroupInput(
-        "vars_single",
-        "Variables (stacked plots)",
-        choices = var_choices,
-        selected = var_choices[[1]]
+      lbl <- paste0(input$aspect, "-facing")
+      list(
+        weir     = load_one("weir",       s$weir[["Selected"]], "stream",        lbl),
+        precip   = load_one("wxsta",      s$wx[["Selected"]],   "precip",        lbl),
+        airtemp  = load_one("wxsta",      s$wx[["Selected"]],   "air_temp_15min",lbl),
+        snowpack = load_one("snowcourse", s$snow[["Selected"]], "snowpack",      lbl),
+        soil     = load_one("snowcourse", s$snow[["Selected"]], "soil",          lbl),
+        kineo    = kineo
       )
     }
   })
   
-  # date filtering
-  filtered_a <- reactive({
+  # ---- Date filter ----
+  filter_by_date <- function(df) {
+    if (is.null(df) || nrow(df) == 0) return(df)
     req(input$date_range)
-    data_a() %>%
+    df %>%
       filter(datetime >= as.POSIXct(input$date_range[1]),
-             datetime <= as.POSIXct(input$date_range[2] + 1))
-  })
-  
-  filtered_b <- reactive({
-    req(input$compare, input$date_range)
-    data_b() %>%
-      filter(datetime >= as.POSIXct(input$date_range[1]),
-             datetime <= as.POSIXct(input$date_range[2] + 1))
-  })
-  
-  # plot factory
-  make_plot <- function(df, var, title) {
-    req(is.data.frame(df), nrow(df) > 0, var %in% names(df))
-    
-    # Rename the target column to a safe placeholder to avoid any scoping issues
-    df$plot_y <- df[[var]]
-    
-    if (var == "precip_mm") {
-      p <- plotly::plot_ly(df, x = ~datetime, y = ~plot_y, type = "bar")
-    } else {
-      p <- plotly::plot_ly(df, x = ~datetime, y = ~plot_y, type = "scatter", mode = "lines")
-    }
-    
-    p %>%
-      plotly::layout(
-        title = list(text = title),
-        xaxis = list(title = "", rangeslider = list(visible = TRUE)),
-        yaxis = list(title = var),
-        margin = list(l = 60, r = 20, b = 50, t = 60)
-      ) %>%
-      plotly::config(displaylogo = FALSE, modeBarButtonsToRemove = c("toImage", "sendDataToCloud"))
+             datetime <= as.POSIXct(as.Date(input$date_range[2]) + 1))
   }
   
-  # UI for plots (compare vs single stacked)
-  output$dynamic_plots <- renderUI({
-    if (isTRUE(input$compare)) {
-      fluidRow(
-        column(6, plotlyOutput("plot_a", height = "520px")),
-        column(6, plotlyOutput("plot_b", height = "520px"))
-      )
-    } else {
-      req(input$vars_single)
-      tagList(lapply(seq_along(input$vars_single), function(i) {
-        plotlyOutput(paste0("plot_single_", i), height = "320px")
-      }))
-    }
+  # ---- Dynamic plot UI ----
+  output$plots_ui <- renderUI({
+    req(input$graphs_on)
+    tagList(lapply(input$graphs_on, function(id) {
+      plotlyOutput(paste0("plot_", id), height = "320px")
+    }))
   })
   
-  # Compare plots
-  output$plot_a <- renderPlotly({
-    req(isTRUE(input$compare), input$var_select)
-    df <- filtered_a()
-    ttl <- paste0(unique(df$site_display), " | ", unique(df$product_display))
-    make_plot(df, input$var_select, ttl)
-  })
+  # ---- Linked zoom ----
+  observers  <- reactiveValues()
+  is_syncing <- reactiveVal(FALSE)
   
-  output$plot_b <- renderPlotly({
-    req(isTRUE(input$compare), input$var_select)
-    df <- filtered_b()
-    ttl <- paste0(unique(df$site_display), " | ", unique(df$product_display))
-    
-    if (!(input$var_select %in% names(df))) {
-      plot_ly() %>%
-        layout(
-          title = list(text = ttl),
-          annotations = list(
-            list(
-              text = paste0("Variable '", input$var_select, "' is not available for this dataset."),
-              x = 0.5, y = 0.5, xref = "paper", yref = "paper", showarrow = FALSE
-            )
-          )
-        )
-    } else {
-      make_plot(df, input$var_select, ttl)
-    }
-  })
-  
-  # Single-site stacked plots
-  observe({
-    req(!isTRUE(input$compare))
-    req(input$vars_single)
-    
-    vars <- input$vars_single
-    
-    lapply(seq_along(vars), function(i) {
+  observeEvent(input$graphs_on, {
+    req(input$graphs_on)
+    for (id in input$graphs_on) {
+      if (!is.null(observers[[id]])) next
       local({
-        ii <- i
-        v <- vars[[ii]]
-        
-        output[[paste0("plot_single_", ii)]] <- renderPlotly({
-          df <- filtered_a()  # ← moved inside renderPlotly so it's reactive
-          req(nrow(df) > 0, v %in% names(df))
-          base_ttl <- paste0(unique(df$site_display), " | ", unique(df$product_display))
-          make_plot(df, v, paste0(base_ttl, " | ", v))
-        })
+        my_id       <- id
+        source_name <- paste0("plot_", my_id)
+        observers[[my_id]] <- observeEvent(
+          plotly::event_data("plotly_relayout", source = source_name),
+          {
+            if (is_syncing()) return()
+            ev <- plotly::event_data("plotly_relayout", source = source_name)
+            if (is.null(ev)) return()
+            if (!is.null(ev[["xaxis.range[0]"]]) && !is.null(ev[["xaxis.range[1]"]])) {
+              xr <- c(ev[["xaxis.range[0]"]], ev[["xaxis.range[1]"]])
+              is_syncing(TRUE)
+              on.exit(is_syncing(FALSE), add = TRUE)
+              for (other in setdiff(input$graphs_on, my_id)) {
+                plotly::plotlyProxy(paste0("plot_", other), session) %>%
+                  plotly::plotlyProxyInvoke("relayout", list(xaxis = list(range = xr)))
+              }
+            }
+            if (!is.null(ev[["xaxis.autorange"]]) && isTRUE(ev[["xaxis.autorange"]])) {
+              is_syncing(TRUE)
+              on.exit(is_syncing(FALSE), add = TRUE)
+              for (other in setdiff(input$graphs_on, my_id)) {
+                plotly::plotlyProxy(paste0("plot_", other), session) %>%
+                  plotly::plotlyProxyInvoke("relayout", list(xaxis = list(autorange = TRUE)))
+              }
+            }
+          },
+          ignoreInit = TRUE
+        )
       })
-    })
+    }
+  }, ignoreInit = FALSE)
+  
+  # ---- Individual plot renders ----
+  output$plot_discharge <- renderPlotly({
+    req("discharge" %in% input$graphs_on)
+    df <- filter_by_date(datasets()$weir)
+    req(!is.null(df), nrow(df) > 0)
+    validate(need("discharge_cfs" %in% names(df) && any(!is.na(df$discharge_cfs)),
+                  "No discharge column found in this weir file."))
+    plot_lines_multi(df, "discharge_cfs", "Stream discharge", "Discharge (cfs)",
+                     source_id = "plot_discharge")
+  })
+  
+  output$plot_discharge_mmday <- renderPlotly({
+    req("discharge_mmday" %in% input$graphs_on)
+    df <- filter_by_date(datasets()$weir)
+    req(!is.null(df), nrow(df) > 0)
+    validate(need("discharge_mm_day" %in% names(df) && any(!is.na(df$discharge_mm_day)),
+                  "No discharge mm/day available (check WEIR_AREA_KM2 mapping)."))
+    plot_lines_multi(df, "discharge_mm_day", "Stream discharge (mm/day)",
+                     "Discharge equivalent (mm/day)", source_id = "plot_discharge_mmday")
+  })
+  
+  output$plot_stage <- renderPlotly({
+    req("stage" %in% input$graphs_on)
+    df <- filter_by_date(datasets()$weir)
+    req(!is.null(df), nrow(df) > 0)
+    validate(need("stage_m" %in% names(df) && any(!is.na(df$stage_m)),
+                  "No stage column found in this weir file."))
+    plot_lines_multi(df, "stage_m", "Stage height", "Stage height (m)",
+                     source_id = "plot_stage")
+  })
+  
+  output$plot_precip <- renderPlotly({
+    req("precip" %in% input$graphs_on)
+    df <- filter_by_date(datasets()$precip)
+    req(!is.null(df), nrow(df) > 0)
+    validate(need("precip_mm" %in% names(df) && any(!is.na(df$precip_mm)),
+                  "No precipitation column found in this weather file."))
+    plot_bars_multi(df, "precip_mm", "Precipitation", "Precipitation (mm per interval)",
+                    source_id = "plot_precip")
+  })
+  
+  output$plot_precip_cum_day <- renderPlotly({
+    req("precip_cum_day" %in% input$graphs_on)
+    df <- filter_by_date(datasets()$precip)
+    req(!is.null(df), nrow(df) > 0)
+    validate(need("precip_mm" %in% names(df) && any(!is.na(df$precip_mm)),
+                  "No precipitation column found in this weather file."))
+    df2 <- make_daily_cum_precip(df)
+    plot_lines_multi(df2, "precip_cum_day_mm", "Cumulative daily precipitation",
+                     "Cumulative precipitation (mm/day)", source_id = "plot_precip_cum_day")
+  })
+  
+  output$plot_airtemp <- renderPlotly({
+    req("airtemp" %in% input$graphs_on)
+    df <- filter_by_date(datasets()$airtemp)
+    req(!is.null(df), nrow(df) > 0)
+    validate(need("air_temp_c" %in% names(df) && any(!is.na(df$air_temp_c)),
+                  "No air temperature column found in this weather file."))
+    plot_lines_multi(df, "air_temp_c", "Air temperature", "Air temperature (°C)",
+                     source_id = "plot_airtemp")
+  })
+  
+  output$plot_snowdepth <- renderPlotly({
+    req("snowdepth" %in% input$graphs_on)
+    df <- filter_by_date(datasets()$snowpack)
+    req(!is.null(df), nrow(df) > 0)
+    validate(need("snow_depth_cm" %in% names(df) && any(!is.na(df$snow_depth_cm)),
+                  "No snow depth column found in this snowcourse file."))
+    plot_lines_multi(df, "snow_depth_cm", "Snow depth", "Snow depth (cm)",
+                     source_id = "plot_snowdepth")
+  })
+  
+  output$plot_wind_speed <- renderPlotly({
+    req("wind_speed" %in% input$graphs_on)
+    df <- filter_by_date(datasets()$kineo)
+    req(!is.null(df), nrow(df) > 0)
+    validate(need("wind_speed_avg" %in% names(df) && any(!is.na(df$wind_speed_avg)),
+                  "No wind speed column found for Kineo."))
+    p <- plotly::plot_ly(source = "plot_wind_speed") %>%
+      plotly::add_lines(data = df, x = ~datetime, y = ~wind_speed_avg, name = "Avg wind speed") %>%
+      plotly::add_lines(data = df, x = ~datetime, y = ~wind_speed_max, name = "Max wind speed") %>%
+      plotly::layout(
+        title  = list(text = "Wind speed (Kineo Tower)"),
+        xaxis  = list(title = "", rangeslider = list(visible = FALSE)),
+        yaxis  = list(title = "Wind speed (m/s)"),
+        legend = list(orientation = "h", x = 0, y = -0.25),
+        margin = list(l = 70, r = 20, b = 95, t = 60)
+      )
+    base_plot_cfg(p)
+  })
+  
+  output$plot_wind_dir <- renderPlotly({
+    req("wind_dir" %in% input$graphs_on)
+    df <- filter_by_date(datasets()$kineo)
+    req(!is.null(df), nrow(df) > 0)
+    validate(need("wind_dir_deg" %in% names(df) && any(!is.na(df$wind_dir_deg)),
+                  "No wind direction column found for Kineo."))
+    p <- plotly::plot_ly(
+      source = "plot_wind_dir", data = df,
+      x = ~datetime, y = ~wind_dir_deg,
+      type = "scatter", mode = "markers",
+      name = "Kineo Tower", marker = list(size = 4)
+    ) %>%
+      plotly::layout(
+        title  = list(text = "Wind direction (Kineo Tower)"),
+        xaxis  = list(title = "", rangeslider = list(visible = FALSE)),
+        yaxis  = list(title = "Wind direction (degrees)"),
+        legend = list(orientation = "h", x = 0, y = -0.25),
+        margin = list(l = 70, r = 20, b = 95, t = 60)
+      )
+    base_plot_cfg(p)
+  })
+  
+  output$plot_soil <- renderPlotly({
+    req("soil" %in% input$graphs_on, input$soil_depths)
+    df <- filter_by_date(datasets()$soil)
+    req(!is.null(df), nrow(df) > 0)
+    plot_soil_multi(df, depths_on = input$soil_depths, source_id = "plot_soil")
   })
   
   output$status <- renderText({
     idx <- file_index()
+    n_ok <- sum(!is.na(idx$path))
     paste0(
-      "Data dir: ", normalizePath(DATA_DIR, winslash = "/", mustWork = FALSE), "\n",
-      "Indexed files: ", nrow(idx)
+      "Indexed files: ", nrow(idx), " | Downloaded: ", n_ok, "\n",
+      "Weir areas (km²): weir3=0.424, weir9=0.684"
     )
   })
 }
