@@ -552,11 +552,8 @@ server <- function(input, output, session) {
   filter_by_date <- function(df) {
     if (is.null(df) || nrow(df) == 0) return(df)
     
-    end_time <- max(df$datetime, na.rm = TRUE)
-    start_time <- end_time %m-% months(2)
-    
-    df %>%
-      filter(datetime >= start_time, datetime <= end_time)
+    cutoff <- Sys.time() - weeks(6)
+    df %>% filter(datetime >= cutoff)
   }
   
   # ---- Dynamic plot UI ----
