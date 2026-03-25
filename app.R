@@ -1,4 +1,3 @@
-# app.R ---------------------------------------------------------------
 library(tidyverse)
 library(lubridate)
 library(shiny)
@@ -6,8 +5,6 @@ library(plotly)
 
 DATA_DIR <- "."
 
-# ---- Weir basin areas (km^2) from hectares ----
-# 1 ha = 0.01 km^2
 WEIR_AREA_KM2 <- c(
   "3" = 0.424,  # 42.4 ha
   "9" = 0.684   # 68.4 ha
