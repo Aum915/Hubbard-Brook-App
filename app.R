@@ -49,7 +49,7 @@ WEIR_AREA_KM2 <- c(
 # Downloading / caching live files
 # -----------------------------
 download_live_file <- function(station_key, file_name) {
-  cfg <- station_config[[station_key]]
+  cfg <- get_station_config()[[station_key]]
   if (is.null(cfg)) return(NA_character_)
   
   tmp <- tempfile(fileext = ".dat")
@@ -106,7 +106,7 @@ build_file_index <- function() {
     station_key = c("kineo","snow2","snow19","weir3","weir9","temp1","temp23","rain1","rain23"),
     site_type   = c("kineo","snowcourse","snowcourse","weir","weir","wxsta","wxsta","wxsta","wxsta"),
     site_id     = c(NA,"2","19","3","9","1","23","1","23"),
-    product     = c("wind","snowpack","snowpack","stream","stream",
+    product     = c("wind","snowpack","soil","stream","stream",
                     "air_temp_15min","air_temp_15min","precip","precip"),
     file_name   = c(
       "Kineo_Tower_Kineo.dat",
@@ -386,9 +386,10 @@ ui <- fluidPage(
   sidebarLayout(
     sidebarPanel(
       actionButton("refresh", "Refresh data"),
+      helpText("Most recent data is downloaded at app start. If you want to redownload, press refresh."),
       hr(),
       selectInput(
-        "aspect", "Aspect",
+        "aspect", "Change Direction",
         choices  = c("South-facing" = "South", "North-facing" = "North", "Show both" = "Both"),
         selected = "South"
       ),
@@ -409,7 +410,7 @@ ui <- fluidPage(
           "Wind direction"                   = "wind_dir",
           "Soil moisture (10/30/50 cm)"      = "soil"
         ),
-        selected = c("discharge","stage","precip","airtemp")
+        selected = c("discharge_mmday", "precip", "airtemp")
       ),
       conditionalPanel(
         condition = "input.graphs_on.indexOf('soil') >= 0",
@@ -507,26 +508,41 @@ server <- function(input, output, session) {
     
     if (input$aspect == "Both") {
       list(
-        weir     = bind_rows(load_one("weir",       s$weir[["South"]], "stream",        "South-facing"),
-                             load_one("weir",       s$weir[["North"]], "stream",        "North-facing")),
-        precip   = bind_rows(load_one("wxsta",      s$wx[["South"]],   "precip",        "South-facing"),
-                             load_one("wxsta",      s$wx[["North"]],   "precip",        "North-facing")),
-        airtemp  = bind_rows(load_one("wxsta",      s$wx[["South"]],   "air_temp_15min","South-facing"),
-                             load_one("wxsta",      s$wx[["North"]],   "air_temp_15min","North-facing")),
-        snowpack = bind_rows(load_one("snowcourse", s$snow[["South"]], "snowpack",      "South-facing"),
-                             load_one("snowcourse", s$snow[["North"]], "snowpack",      "North-facing")),
-        soil     = bind_rows(load_one("snowcourse", s$snow[["South"]], "soil",          "South-facing"),
-                             load_one("snowcourse", s$snow[["North"]], "soil",          "North-facing")),
+        weir = bind_rows(
+          load_one("weir", s$weir[["South"]], "stream", "Weir 3"),
+          load_one("weir", s$weir[["North"]], "stream", "Weir 9")
+        ),
+        precip = bind_rows(
+          load_one("wxsta", s$wx[["South"]], "precip", "Weather station 1"),
+          load_one("wxsta", s$wx[["North"]], "precip", "Weather station 23")
+        ),
+        airtemp = bind_rows(
+          load_one("wxsta", s$wx[["South"]], "air_temp_15", "Weather station 1"),
+          load_one("wxsta", s$wx[["North"]], "air_temp_15", "Weather station 23")
+        ),
+        snowpack = bind_rows(
+          load_one("snowcourse", s$snow[["South"]], "snowpack", "Snowcourse 2"),
+          load_one("snowcourse", s$snow[["North"]], "snowpack", "Snowcourse 19")
+        ),
+        soil = bind_rows(
+          load_one("snowcourse", s$snow[["South"]], "soil", "Snowcourse 2"),
+          load_one("snowcourse", s$snow[["North"]], "soil", "Snowcourse 19")
+        ),
         kineo    = kineo
       )
     } else {
       lbl <- paste0(input$aspect, "-facing")
       list(
-        weir     = load_one("weir",       s$weir[["Selected"]], "stream",        lbl),
-        precip   = load_one("wxsta",      s$wx[["Selected"]],   "precip",        lbl),
-        airtemp  = load_one("wxsta",      s$wx[["Selected"]],   "air_temp_15min",lbl),
-        snowpack = load_one("snowcourse", s$snow[["Selected"]], "snowpack",      lbl),
-        soil     = load_one("snowcourse", s$snow[["Selected"]], "soil",          lbl),
+        weir = load_one("weir", s$weir[["Selected"]], "stream",
+                        if (input$aspect == "South") "Weir 3" else "Weir 9"),
+        precip = load_one("wxsta", s$wx[["Selected"]], "precip",
+                          if (input$aspect == "South") "Weather station 1" else "Weather station 23"),
+        airtemp = load_one("wxsta", s$wx[["Selected"]], "air_temp_15",
+                           if (input$aspect == "South") "Weather station 1" else "Weather station 23"),
+        snowpack = load_one("snowcourse", s$snow[["Selected"]], "snowpack",
+                            if (input$aspect == "South") "Snowcourse 2" else "Snowcourse 19"),
+        soil = load_one("snowcourse", s$snow[["Selected"]], "soil",
+                        if (input$aspect == "South") "Snowcourse 2" else "Snowcourse 19"),
         kineo    = kineo
       )
     }
@@ -535,10 +551,12 @@ server <- function(input, output, session) {
   # ---- Date filter ----
   filter_by_date <- function(df) {
     if (is.null(df) || nrow(df) == 0) return(df)
-    req(input$date_range)
+    
+    end_time <- max(df$datetime, na.rm = TRUE)
+    start_time <- end_time %m-% months(2)
+    
     df %>%
-      filter(datetime >= as.POSIXct(input$date_range[1]),
-             datetime <= as.POSIXct(as.Date(input$date_range[2]) + 1))
+      filter(datetime >= start_time, datetime <= end_time)
   }
   
   # ---- Dynamic plot UI ----
