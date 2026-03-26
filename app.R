@@ -4,6 +4,7 @@ library(lubridate)
 library(shiny)
 library(plotly)
 library(httr)
+library(shinycssloaders)
 
 # -----------------------------
 # Accessing credentials
@@ -382,6 +383,96 @@ plot_soil_multi <- function(df, depths_on = c("10","30","50"),
 # UI
 # -----------------------------
 ui <- fluidPage(
+  tags$script(HTML("
+  Shiny.addCustomMessageHandler('hideOverlay', function(msg) {
+    document.getElementById('startup_overlay').style.display = 'none';
+  });
+  Shiny.addCustomMessageHandler('showOverlay', function(msg) {
+    document.getElementById('startup_overlay').style.display = 'flex';
+  });
+
+  // Watch for plotly plots rendered and report their output ID back to Shiny
+  $(document).on('shiny:value', function(event) {
+    if (event.name && event.name.startsWith('plot_')) {
+      setTimeout(function() {
+        Shiny.setInputValue('plot_rendered', event.name, {priority: 'event'});
+      }, 100);
+    }
+  });
+")),
+  
+  tags$div(
+    id = "startup_overlay",
+    style = "position:fixed; top:0; left:0; width:100%; height:100%;
+           background:rgba(255,255,255,0.95); z-index:9999;
+           display:flex; flex-direction:column;
+           align-items:center; justify-content:center;",
+    
+    # CSS for the tree and falling leaves
+    tags$style(HTML("
+    .tree-container {
+      position: relative;
+      width: 120px;
+      height: 160px;
+      margin-bottom: 20px;
+    }
+    .tree-trunk {
+      position: absolute;
+      bottom: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 16px;
+      height: 45px;
+      background: #6b3d0f;
+      border-radius: 3px;
+    }
+    .tree-top {
+      position: absolute;
+      bottom: 38px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 0;
+      height: 0;
+      border-left: 50px solid transparent;
+      border-right: 50px solid transparent;
+      border-bottom: 80px solid #2d6a2d;
+    }
+    .tree-mid {
+      position: absolute;
+      bottom: 68px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 0;
+      height: 0;
+      border-left: 40px solid transparent;
+      border-right: 40px solid transparent;
+      border-bottom: 65px solid #357a35;
+    }
+    .tree-tip {
+      position: absolute;
+      bottom: 105px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 0;
+      height: 0;
+      border-left: 28px solid transparent;
+      border-right: 28px solid transparent;
+      border-bottom: 50px solid #3d8f3d;
+    }")),
+    
+    # Tree HTML
+    tags$div(
+      class = "tree-container",
+      tags$div(class = "tree-tip"),
+      tags$div(class = "tree-mid"),
+      tags$div(class = "tree-top"),
+      tags$div(class = "tree-trunk")
+    ),
+    
+    tags$div(class = "loading-text", "Loading..."),
+    tags$div(class = "loading-subtext", "Downloading live data!")
+  ),
+  
   titlePanel("Hubbard Brook Live Viewer Prototype"),
   sidebarLayout(
     sidebarPanel(
@@ -393,8 +484,11 @@ ui <- fluidPage(
         choices  = c("South-facing" = "South", "North-facing" = "North", "Show both" = "Both"),
         selected = "South"
       ),
-      dateRangeInput("date_range", "Date range",
-                     start = Sys.Date() - 30, end = Sys.Date()),
+      dateRangeInput("date_range", "Date range", 
+                     start = Sys.Date() - 42, 
+                     end = Sys.Date(),
+                     min = Sys.Date() - 42, 
+                     max = Sys.Date()),
       hr(),
       checkboxGroupInput(
         "graphs_on", "Graphs to show",
@@ -447,32 +541,6 @@ server <- function(input, output, session) {
     file_index(idx)
   }
   
-  observeEvent(TRUE, { refresh_index() }, once = TRUE)
-  observeEvent(input$refresh, { refresh_index() })
-  
-  # ---- Aspect → site keys ----
-  aspect_sites <- reactive({
-    idx <- file_index()
-    if (input$aspect == "Both") {
-      list(
-        weir  = c(South = pick_site_for_aspect(idx, "weir",       "South"),
-                  North = pick_site_for_aspect(idx, "weir",       "North")),
-        wx    = c(South = pick_site_for_aspect(idx, "wxsta",      "South"),
-                  North = pick_site_for_aspect(idx, "wxsta",      "North")),
-        snow  = c(South = pick_site_for_aspect(idx, "snowcourse", "South"),
-                  North = pick_site_for_aspect(idx, "snowcourse", "North")),
-        kineo = "kineo_tower"
-      )
-    } else {
-      list(
-        weir  = c(Selected = pick_site_for_aspect(idx, "weir",       input$aspect)),
-        wx    = c(Selected = pick_site_for_aspect(idx, "wxsta",      input$aspect)),
-        snow  = c(Selected = pick_site_for_aspect(idx, "snowcourse", input$aspect)),
-        kineo = "kineo_tower"
-      )
-    }
-  })
-  
   # ---- Path lookup ----
   selected_path <- function(site_type, site_key, product) {
     idx <- file_index()
@@ -501,49 +569,82 @@ server <- function(input, output, session) {
     df
   }
   
+  # ---- All data ----
+  all_data <- reactive({
+    idx <- file_index()
+    req(nrow(idx) > 0, any(!is.na(idx$path)))
+    list(
+      weir3    = load_one("weir",       "weir3",        "stream",        "Weir 3"),
+      weir9    = load_one("weir",       "weir9",        "stream",        "Weir 9"),
+      precip1  = load_one("wxsta",      "wxsta1",       "precip",        "Weather station 1"),
+      precip23 = load_one("wxsta",      "wxsta23",      "precip",        "Weather station 23"),
+      temp1    = load_one("wxsta",      "wxsta1",       "air_temp_15min","Weather station 1"),
+      temp23   = load_one("wxsta",      "wxsta23",      "air_temp_15min","Weather station 23"),
+      snow2    = load_one("snowcourse", "snowcourse2",  "snowpack",      "Snowcourse 2"),
+      snow19   = load_one("snowcourse", "snowcourse19", "soil",          "Snowcourse 19"),
+      soil2    = load_one("snowcourse", "snowcourse2",  "soil",          "Snowcourse 2"),
+      kineo    = load_one("kineo",      "kineo_tower",  "wind",          "Kineo Tower")
+    )
+  })
+  
+  # ---- Track which plots have rendered in the browser ----
+  plots_done <- reactiveVal(character(0))
+  
+  observeEvent(input$plot_rendered, {
+    plots_done(unique(c(plots_done(), input$plot_rendered)))
+    if (all(input$graphs_on %in% plots_done())) {
+      session$sendCustomMessage("hideOverlay", list())
+      plots_done(character(0))
+    }
+  })
+  
+  # ---- Reset tracker on refresh ----
+  observeEvent(file_index(), {
+    plots_done(character(0))
+  }, ignoreInit = FALSE)
+  
+  # ---- Safety fallback after 30 seconds ----
+  observe({
+    invalidateLater(30000, session)
+    session$sendCustomMessage("hideOverlay", list())
+  })
+  
+  observeEvent(TRUE, { refresh_index() }, once = TRUE)
+  observeEvent(input$refresh, {
+    session$sendCustomMessage("showOverlay", list())
+    refresh_index()
+  })
+  
   # ---- Datasets reactive ----
   datasets <- reactive({
-    s     <- aspect_sites()
-    kineo <- load_one("kineo", s$kineo, "wind", "Kineo Tower")
+    d <- all_data()
     
     if (input$aspect == "Both") {
       list(
-        weir = bind_rows(
-          load_one("weir", s$weir[["South"]], "stream", "Weir 3"),
-          load_one("weir", s$weir[["North"]], "stream", "Weir 9")
-        ),
-        precip = bind_rows(
-          load_one("wxsta", s$wx[["South"]], "precip", "Weather station 1"),
-          load_one("wxsta", s$wx[["North"]], "precip", "Weather station 23")
-        ),
-        airtemp = bind_rows(
-          load_one("wxsta", s$wx[["South"]], "air_temp_15", "Weather station 1"),
-          load_one("wxsta", s$wx[["North"]], "air_temp_15", "Weather station 23")
-        ),
-        snowpack = bind_rows(
-          load_one("snowcourse", s$snow[["South"]], "snowpack", "Snowcourse 2"),
-          load_one("snowcourse", s$snow[["North"]], "snowpack", "Snowcourse 19")
-        ),
-        soil = bind_rows(
-          load_one("snowcourse", s$snow[["South"]], "soil", "Snowcourse 2"),
-          load_one("snowcourse", s$snow[["North"]], "soil", "Snowcourse 19")
-        ),
-        kineo    = kineo
+        weir     = bind_rows(d$weir3,   d$weir9),
+        precip   = bind_rows(d$precip1, d$precip23),
+        airtemp  = bind_rows(d$temp1,   d$temp23),
+        snowpack = d$snow2,
+        soil     = bind_rows(d$soil2,   d$snow19),
+        kineo    = d$kineo
+      )
+    } else if (input$aspect == "South") {
+      list(
+        weir     = d$weir3,
+        precip   = d$precip1,
+        airtemp  = d$temp1,
+        snowpack = d$snow2,
+        soil     = d$soil2,
+        kineo    = d$kineo
       )
     } else {
-      lbl <- paste0(input$aspect, "-facing")
       list(
-        weir = load_one("weir", s$weir[["Selected"]], "stream",
-                        if (input$aspect == "South") "Weir 3" else "Weir 9"),
-        precip = load_one("wxsta", s$wx[["Selected"]], "precip",
-                          if (input$aspect == "South") "Weather station 1" else "Weather station 23"),
-        airtemp = load_one("wxsta", s$wx[["Selected"]], "air_temp_15",
-                           if (input$aspect == "South") "Weather station 1" else "Weather station 23"),
-        snowpack = load_one("snowcourse", s$snow[["Selected"]], "snowpack",
-                            if (input$aspect == "South") "Snowcourse 2" else "Snowcourse 19"),
-        soil = load_one("snowcourse", s$snow[["Selected"]], "soil",
-                        if (input$aspect == "South") "Snowcourse 2" else "Snowcourse 19"),
-        kineo    = kineo
+        weir     = d$weir9,
+        precip   = d$precip23,
+        airtemp  = d$temp23,
+        snowpack = NULL,
+        soil     = d$snow19,
+        kineo    = d$kineo
       )
     }
   })
@@ -551,9 +652,15 @@ server <- function(input, output, session) {
   # ---- Date filter ----
   filter_by_date <- function(df) {
     if (is.null(df) || nrow(df) == 0) return(df)
+    req(input$date_range)
     
-    cutoff <- Sys.time() - weeks(6)
-    df %>% filter(datetime >= cutoff)
+    earliest_allowed <- Sys.Date() - 42
+    start <- max(as.Date(input$date_range[1]), earliest_allowed)
+    end   <- min(as.Date(input$date_range[2]), Sys.Date())
+    
+    df %>%
+      filter(datetime >= as.POSIXct(start),
+             datetime <= as.POSIXct(end + 1))
   }
   
   # ---- Dynamic plot UI ----
@@ -612,8 +719,9 @@ server <- function(input, output, session) {
     req(!is.null(df), nrow(df) > 0)
     validate(need("discharge_cfs" %in% names(df) && any(!is.na(df$discharge_cfs)),
                   "No discharge column found in this weir file."))
-    plot_lines_multi(df, "discharge_cfs", "Stream discharge", "Discharge (cfs)",
+    p <- plot_lines_multi(df, "discharge_cfs", "Stream discharge", "Discharge (cfs)",
                      source_id = "plot_discharge")
+    p
   })
   
   output$plot_discharge_mmday <- renderPlotly({
@@ -622,8 +730,9 @@ server <- function(input, output, session) {
     req(!is.null(df), nrow(df) > 0)
     validate(need("discharge_mm_day" %in% names(df) && any(!is.na(df$discharge_mm_day)),
                   "No discharge mm/day available (check WEIR_AREA_KM2 mapping)."))
-    plot_lines_multi(df, "discharge_mm_day", "Stream discharge (mm/day)",
+    p <- plot_lines_multi(df, "discharge_mm_day", "Stream discharge (mm/day)",
                      "Discharge equivalent (mm/day)", source_id = "plot_discharge_mmday")
+    p
   })
   
   output$plot_stage <- renderPlotly({
@@ -632,8 +741,9 @@ server <- function(input, output, session) {
     req(!is.null(df), nrow(df) > 0)
     validate(need("stage_m" %in% names(df) && any(!is.na(df$stage_m)),
                   "No stage column found in this weir file."))
-    plot_lines_multi(df, "stage_m", "Stage height", "Stage height (m)",
+    p <- plot_lines_multi(df, "stage_m", "Stage height", "Stage height (m)",
                      source_id = "plot_stage")
+    p
   })
   
   output$plot_precip <- renderPlotly({
@@ -642,8 +752,9 @@ server <- function(input, output, session) {
     req(!is.null(df), nrow(df) > 0)
     validate(need("precip_mm" %in% names(df) && any(!is.na(df$precip_mm)),
                   "No precipitation column found in this weather file."))
-    plot_bars_multi(df, "precip_mm", "Precipitation", "Precipitation (mm per interval)",
+    p <- plot_bars_multi(df, "precip_mm", "Precipitation", "Precipitation (mm per interval)",
                     source_id = "plot_precip")
+    p
   })
   
   output$plot_precip_cum_day <- renderPlotly({
@@ -653,8 +764,9 @@ server <- function(input, output, session) {
     validate(need("precip_mm" %in% names(df) && any(!is.na(df$precip_mm)),
                   "No precipitation column found in this weather file."))
     df2 <- make_daily_cum_precip(df)
-    plot_lines_multi(df2, "precip_cum_day_mm", "Cumulative daily precipitation",
+    p <- plot_lines_multi(df2, "precip_cum_day_mm", "Cumulative daily precipitation",
                      "Cumulative precipitation (mm/day)", source_id = "plot_precip_cum_day")
+    p
   })
   
   output$plot_airtemp <- renderPlotly({
@@ -663,8 +775,9 @@ server <- function(input, output, session) {
     req(!is.null(df), nrow(df) > 0)
     validate(need("air_temp_c" %in% names(df) && any(!is.na(df$air_temp_c)),
                   "No air temperature column found in this weather file."))
-    plot_lines_multi(df, "air_temp_c", "Air temperature", "Air temperature (°C)",
+    p <- plot_lines_multi(df, "air_temp_c", "Air temperature", "Air temperature (°C)",
                      source_id = "plot_airtemp")
+    p
   })
   
   output$plot_snowdepth <- renderPlotly({
@@ -673,8 +786,9 @@ server <- function(input, output, session) {
     req(!is.null(df), nrow(df) > 0)
     validate(need("snow_depth_cm" %in% names(df) && any(!is.na(df$snow_depth_cm)),
                   "No snow depth column found in this snowcourse file."))
-    plot_lines_multi(df, "snow_depth_cm", "Snow depth", "Snow depth (cm)",
+    p <- plot_lines_multi(df, "snow_depth_cm", "Snow depth", "Snow depth (cm)",
                      source_id = "plot_snowdepth")
+    p
   })
   
   output$plot_wind_speed <- renderPlotly({
@@ -693,7 +807,8 @@ server <- function(input, output, session) {
         legend = list(orientation = "h", x = 0, y = -0.25),
         margin = list(l = 70, r = 20, b = 95, t = 60)
       )
-    base_plot_cfg(p)
+    p <- base_plot_cfg(p)
+    p
   })
   
   output$plot_wind_dir <- renderPlotly({
@@ -715,14 +830,16 @@ server <- function(input, output, session) {
         legend = list(orientation = "h", x = 0, y = -0.25),
         margin = list(l = 70, r = 20, b = 95, t = 60)
       )
-    base_plot_cfg(p)
+    p <- base_plot_cfg(p)
+    p
   })
   
   output$plot_soil <- renderPlotly({
     req("soil" %in% input$graphs_on, input$soil_depths)
     df <- filter_by_date(datasets()$soil)
     req(!is.null(df), nrow(df) > 0)
-    plot_soil_multi(df, depths_on = input$soil_depths, source_id = "plot_soil")
+    p <- plot_soil_multi(df, depths_on = input$soil_depths, source_id = "plot_soil")
+    p
   })
   
   output$status <- renderText({
