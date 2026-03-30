@@ -435,7 +435,7 @@ ui <- fluidPage(
 # Server
 # -----------------------------
 server <- function(input, output, session) {
-  thematic_shiny()
+  
   live_file_cache <- reactiveValues()
   file_index      <- reactiveVal(empty_file_index())
   
