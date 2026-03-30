@@ -5,6 +5,8 @@ library(shiny)
 library(plotly)
 library(httr)
 library(shinycssloaders)
+library(bslib)
+library(thematic)
 
 # -----------------------------
 # Accessing credentials
@@ -473,14 +475,16 @@ ui <- fluidPage(
     tags$div(class = "loading-subtext", "Downloading live data!")
   ),
   
+  theme = bs_theme(preset = 'flatly'),
   titlePanel("Hubbard Brook Live Viewer Prototype"),
   sidebarLayout(
     sidebarPanel(
       actionButton("refresh", "Refresh data"),
-      helpText("Most recent data is downloaded at app start. If you want to redownload, press refresh."),
+      helpText("
+               Most recent data is downloaded at app start. If you want to redownload, press refresh."),
       hr(),
       selectInput(
-        "aspect", "Change Direction",
+        "aspect", "Select Watershed Aspect",
         choices  = c("South-facing" = "South", "North-facing" = "North", "Show both" = "Both"),
         selected = "South"
       ),
@@ -491,7 +495,7 @@ ui <- fluidPage(
                      max = Sys.Date()),
       hr(),
       checkboxGroupInput(
-        "graphs_on", "Graphs to show",
+        "graphs_on", "Graph Variables",
         choices = c(
           "Stream discharge (cfs)"           = "discharge",
           "Stream discharge (mm/day)"        = "discharge_mmday",
