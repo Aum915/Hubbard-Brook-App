@@ -7,6 +7,8 @@ library(httr)
 library(shinycssloaders)
 library(bslib)
 library(thematic)
+library(later)
+
 
 # -----------------------------
 # Accessing credentials
@@ -410,7 +412,7 @@ ui <- fluidPage(
            display:flex; flex-direction:column;
            align-items:center; justify-content:center;",
     
-    # CSS for the tree and falling leaves
+    # CSS for the tree and loading text
     tags$style(HTML("
     .tree-container {
       position: relative;
@@ -460,7 +462,40 @@ ui <- fluidPage(
       border-left: 28px solid transparent;
       border-right: 28px solid transparent;
       border-bottom: 50px solid #3d8f3d;
-    }")),
+    }
+    .loading-text {
+      display: flex;
+      gap: 1px;
+      font-size: 22px;
+      color: #357a35;
+      letter-spacing: 2px;
+      margin-bottom: 8px;
+    }
+    .loading-dot {
+      display: inline-block;
+      animation: wave 1.4s ease-in-out infinite;
+   }
+  .loading-dot:nth-child(1) { animation-delay: 0.0s; }
+  .loading-dot:nth-child(2) { animation-delay: 0.1s; }
+  .loading-dot:nth-child(3) { animation-delay: 0.2s; }
+  .loading-dot:nth-child(4) { animation-delay: 0.3s; }
+  .loading-dot:nth-child(5) { animation-delay: 0.4s; }
+  .loading-dot:nth-child(6) { animation-delay: 0.5s; }
+  .loading-dot:nth-child(7) { animation-delay: 0.6s; }
+  .loading-dot:nth-child(8) { animation-delay: 0.7s; }
+  .loading-dot:nth-child(9) { animation-delay: 0.8s; }
+  .loading-dot:nth-child(10) { animation-delay: 0.9s; }
+  @keyframes wave {
+    0%, 60%, 100% { transform: translateY(0);    }
+    30%            { transform: translateY(-10px); }
+  }
+  .loading-subtext {
+    font-size: 11px;
+    color: #bbb;
+    font-weight: 300;
+    margin-top: 4px;
+    letter-spacing: 0.5px;
+  }")),
     
     # Tree HTML
     tags$div(
@@ -471,8 +506,19 @@ ui <- fluidPage(
       tags$div(class = "tree-trunk")
     ),
     
-    tags$div(class = "loading-text", "Loading..."),
-    tags$div(class = "loading-subtext", "Downloading live data!")
+    tags$div(class = "loading-text",
+             tags$span(class = "loading-dot", "L"),
+             tags$span(class = "loading-dot", "o"),
+             tags$span(class = "loading-dot", "a"),
+             tags$span(class = "loading-dot", "d"),
+             tags$span(class = "loading-dot", "i"),
+             tags$span(class = "loading-dot", "n"),
+             tags$span(class = "loading-dot", "g"),
+             tags$span(class = "loading-dot", "."),
+             tags$span(class = "loading-dot", "."),
+             tags$span(class = "loading-dot", ".")),
+    tags$div(class = "loading-subtext", 
+             "Downloading live data meow!")
   ),
   
   theme = bs_theme(preset = 'flatly'),
@@ -480,8 +526,8 @@ ui <- fluidPage(
   sidebarLayout(
     sidebarPanel(
       actionButton("refresh", "Refresh data"),
-      helpText("
-               Most recent data is downloaded at app start. If you want to redownload, press refresh."),
+      tags$p("Most recent data is downloaded at app start. If you want to redownload the data, press refresh.",
+             style = "font-size: 11px; color: #888; margin-top: 5px"),
       hr(),
       selectInput(
         "aspect", "Select Watershed Aspect",
@@ -591,32 +637,20 @@ server <- function(input, output, session) {
     )
   })
   
-  # ---- Track which plots have rendered in the browser ----
-  plots_done <- reactiveVal(character(0))
-  
-  observeEvent(input$plot_rendered, {
-    plots_done(unique(c(plots_done(), input$plot_rendered)))
-    if (all(input$graphs_on %in% plots_done())) {
+  # ---- Hides overlay after 45s ----
+  observeEvent(TRUE, {
+    refresh_index()
+    later::later(function() {
       session$sendCustomMessage("hideOverlay", list())
-      plots_done(character(0))
-    }
-  })
+    }, delay = 2)
+  }, once = TRUE)
   
-  # ---- Reset tracker on refresh ----
-  observeEvent(file_index(), {
-    plots_done(character(0))
-  }, ignoreInit = FALSE)
-  
-  # ---- Safety fallback after 30 seconds ----
-  observe({
-    invalidateLater(30000, session)
-    session$sendCustomMessage("hideOverlay", list())
-  })
-  
-  observeEvent(TRUE, { refresh_index() }, once = TRUE)
   observeEvent(input$refresh, {
     session$sendCustomMessage("showOverlay", list())
     refresh_index()
+    later::later(function() {
+      session$sendCustomMessage("hideOverlay", list())
+    }, delay = 0.5)
   })
   
   # ---- Datasets reactive ----
