@@ -253,3 +253,56 @@ all_dates <- c(
 
 global_min_date <- min(all_dates, na.rm = TRUE)
 global_max_date <- max(all_dates, na.rm = TRUE)
+<<<<<<< HEAD
+=======
+
+
+
+###########################################
+#########LIVE DATA READ IN ################
+##########################################
+
+library(httr)
+library(readr)
+
+#### Read Hubbard Brook Data function
+readHBdat <- function(url){
+
+url <- url
+
+lines <- read_lines(curl::curl(
+  url,
+  handle = curl::new_handle(
+    username = "capstone",
+    password = "data2025"
+  )
+))
+
+# Keep line 2 (headers) and lines 5 onward (data)
+cleaned_lines <- c(
+  lines[2],        # header
+  lines[5:length(lines)]  # data
+)
+
+# Read cleaned text as CSV
+df <- read_csv(I(cleaned_lines), na = "NaN") 
+
+return(df)
+}
+
+
+winddat <- readHBdat("https://hbrsensor.sr.unh.edu/data/hbrloggernet/loggernetfiles_complete/LoggerNetDir/Kineo_Tower_Kineo.dat")
+snowdat <- readHBdat("https://hbrsensor.sr.unh.edu/data/hbrloggernet/loggernetfiles_complete/LoggerNetDir/Snowcourse_2_SS2-snowdat.dat")
+soildat <- readHBdat("https://hbrsensor.sr.unh.edu/data/hbrloggernet/loggernetfiles_complete/LoggerNetDir/Snowcourse_19_SS19_soildat.dat")
+streamdatSouth <- readHBdat("https://hbrsensor.sr.unh.edu/data/hbrloggernet/loggernetfiles_complete/LoggerNetDir/weir3_weir_3.dat")
+streamdatNorth <- readHBdat("https://hbrsensor.sr.unh.edu/data/hbrloggernet/loggernetfiles_complete/LoggerNetDir/weir9_weir_9.dat")
+tempdatSouth <- readHBdat("https://hbrsensor.sr.unh.edu/data/hbrloggernet/loggernetfiles_complete/LoggerNetDir/wxsta1_SF_Wx1_Temp_15min.dat")
+raindatSouth <- readHBdat("https://hbrsensor.sr.unh.edu/data/hbrloggernet/loggernetfiles_complete/LoggerNetDir/wxsta1_Wx_1_rain.dat")
+raindatNorth <- readHBdat("https://hbrsensor.sr.unh.edu/data/hbrloggernet/loggernetfiles_complete/LoggerNetDir/wxsta23_Wx_23_rain.dat")
+tempdatNorth <- readHBdat("https://hbrsensor.sr.unh.edu/data/hbrloggernet/loggernetfiles_complete/LoggerNetDir/wxsta23_Wx_23_Temp_15_min.dat")
+
+tempdatNorth <- tempdatNorth |>
+  drop_na() |> 
+  group_by(TIMESTAMP) |> 
+  mutate(temp_avg = mean(c(ST110_1, St110_2, St110_3)))
+>>>>>>> 50c2c3c88f9f616c167d389fc05beb36005a8786

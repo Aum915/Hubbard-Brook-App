@@ -1,494 +1,215 @@
+# ---- Simplified Live Hubbard Brook Viewer (Enhanced) ----
 
-
+library(shiny)
 library(tidyverse)
 library(lubridate)
-library(shiny)
+library(plotly)
+library(curl)
+library(memoise)
 
-
-
-######## NORTH ASPECT STREAM FLOW READ IN ##############
-
-f <- "weir3_weir_3.dat"
-
-header_lines <- readLines(f, n = 4)
-col_names <- gsub('"', "", header_lines[2])
-col_names <- strsplit(col_names, ",")[[1]]
-
-streamflowNorth <- read.table(
-  f,
-  sep = ",",
-  header = FALSE,
-  skip = 4,
-  col.names = col_names,
-  fill = TRUE,
-  stringsAsFactors = FALSE,
-  quote = "\""
-) |>
-  select(TIMESTAMP, pressure1_Q) |>
-  mutate(datetime = ymd_hms(TIMESTAMP)) |>
-  filter(year(datetime) > 2025)
-
-########### SOUTH ASPECT STREAM FLOW READ IN #########################
-
-g <- "weir9_weir_9.dat"
-
-header_lines <- readLines(f, n = 4)
-col_names <- gsub('"', "", header_lines[2])
-col_names <- strsplit(col_names, ",")[[1]]
-
-streamflowSouth <- read.table(
-  g,
-  sep = ",",
-  header = FALSE,
-  skip = 4,
-  col.names = col_names,
-  fill = TRUE,
-  stringsAsFactors = FALSE,
-  quote = "\""
-) |>
-  select(TIMESTAMP, pressure1_Q) |>
-  mutate(datetime = ymd_hms(TIMESTAMP)) |>
-  filter(year(datetime) > 2025)
-
-
-########### PRECIP READ IN ##############################
-
-
-### NORTH
-
-h <- "wxsta1_Wx_1_rain.dat"
-
-header_lines <- readLines(h, n = 4)
-col_names <- gsub('"', "", header_lines[2])
-col_names <- strsplit(col_names, ",")[[1]]
-
-<<<<<<< HEAD
-
-precipNorth <- read.table(
-  
-=======
-precip <- read.table(
->>>>>>> c9c4dd6ee9778f247e70f38abcd69cdefee9313e
-  h,
-  sep = ",",
-  header = FALSE,
-  skip = 4,
-  col.names = col_names,
-  fill = TRUE,
-  stringsAsFactors = FALSE,
-  quote = "\""
-) |>
-  select(TIMESTAMP, ReportPCP) |>
-  mutate(datetime = ymd_hms(TIMESTAMP)) |>
-  filter(year(datetime) >= 2023)  ## Static file only goes to 2024
-
-<<<<<<< HEAD
-### SOUTH
-
-z <- "wxsta23_Wx_23_rain.dat"
-
-header_lines <- readLines(z, n = 4)
-col_names <- gsub('"', "", header_lines[2])
-col_names <- strsplit(col_names, ",")[[1]]
-
-
-precipSouth <- read.table(
-  
-  z,
-  sep = ",",
-  header = FALSE,
-  skip = 4,
-  col.names = col_names,
-  fill = TRUE,
-  stringsAsFactors = FALSE,
-  quote = "\""
-) |> 
-  select(TIMESTAMP, ReportPCP) |> 
-  mutate(datetime = ymd_hms(TIMESTAMP)) |> 
-  filter(year(datetime) >= 2023)  ## Static file only goes to 2024
-
-######## WIND READ IN  ####################################
-
-j <- "Kineo_Tower_Kineo-Aum.dat"
-
-header_lines <- readLines(j, n = 4)
-col_names <- gsub('"', "", header_lines[2])
-col_names <- strsplit(col_names, ",")[[1]]
-
-
-wind <- read.table(
-  
-  j,
-  sep = ",",
-  header = FALSE,
-  skip = 4,
-  col.names = col_names,
-  fill = TRUE,
-  stringsAsFactors = FALSE,
-  quote = "\""
-) |> 
-  select(TIMESTAMP, WS_ms_Avg, WS_ms_Max, WindDir) |> 
-  mutate(datetime = ymd_hms(TIMESTAMP)) |> 
-  filter(year(datetime) == 2026)
-
-
-###### SOIL MOISTURE READ IN #######################
-
-k <- "Snowcourse_19_SS19_soildat.dat"
-
-header_lines <- readLines(k, n = 4)
-col_names <- gsub('"', "", header_lines[2])
-col_names <- strsplit(col_names, ",")[[1]]
-
-
-soilmoisture <- read.table(
-  
-  k,
-  sep = ",",
-  header = FALSE,
-  skip = 4,
-  col.names = col_names,
-  fill = TRUE,
-  stringsAsFactors = FALSE,
-  quote = "\""
-) |> 
-  select(TIMESTAMP, TDR_10typ_vwc, TDR_30typ_vwc, TDR_50typ_vwc) |> 
-  mutate(datetime = ymd_hms(TIMESTAMP)) |> 
-  filter(year(datetime) == 2026) |> 
-  pivot_longer(cols = c(TDR_10typ_vwc : TDR_50typ_vwc))
-
-
-
-######## SNOW DATA READ IN #######################
-
-l <- "Snowcourse_2_SS2-snowdat-Aum.dat"
-
-header_lines <- readLines(l, n = 4)
-col_names <- gsub('"', "", header_lines[2])
-col_names <- strsplit(col_names, ",")[[1]]
-
-
-snow <- read.table(
-  
-  l,
-  sep = ",",
-  header = FALSE,
-  skip = 4,
-  col.names = col_names,
-  fill = TRUE,
-  stringsAsFactors = FALSE,
-  quote = "\""
-) |> 
-  select(TIMESTAMP, SWE, Depthraw, Depthscaled) |> 
-  mutate(datetime = ymd_hms(TIMESTAMP)) |> 
-  filter(year(datetime) == 2026)
-
-
-############ TEMP READ IN #################
-
-
-### North
-
-x <- "wxsta1_SF_Wx1_Temp_15min.dat"
-
-header_lines <- readLines(x, n = 4)
-col_names <- gsub('"', "", header_lines[2])
-col_names <- strsplit(col_names, ",")[[1]]
-
-
-tempNorth <- read.table(
-  
-  x,
-  sep = ",",
-  header = FALSE,
-  skip = 4,
-  col.names = col_names,
-  fill = TRUE,
-  stringsAsFactors = FALSE,
-  quote = "\""
-) |> 
-  select(TIMESTAMP, ST110_1 : St110_3, RH) |> 
-  mutate(datetime = ymd_hms(TIMESTAMP)) |> 
-  filter(year(datetime) == 2026) |> 
-  group_by(datetime) |> 
-  mutate(temp_avg = mean(c(ST110_1, St110_2, St110_3)))
-
-### SOUTH
-
-c <- "wxsta23_Wx_23_Temp_15_min.dat"
-
-header_lines <- readLines(c, n = 4)
-col_names <- gsub('"', "", header_lines[2])
-col_names <- strsplit(col_names, ",")[[1]]
-
-
-tempSouth <- read.table(
-  
-  c,
-  sep = ",",
-  header = FALSE,
-  skip = 4,
-  col.names = col_names,
-  fill = TRUE,
-  stringsAsFactors = FALSE,
-  quote = "\""
-) |> 
-  select(TIMESTAMP, ST110_1 : St110_3, RH) |> 
-  mutate(datetime = ymd_hms(TIMESTAMP)) |> 
-  filter(year(datetime) == 2026) |> 
-  group_by(datetime) |> 
-  mutate(temp_avg = mean(c(ST110_1, St110_2, St110_3)))
-
-
-
-
-#soilmoisture |> 
-#  ggplot(aes(datetime, value, color = name))+
-#  geom_line()
-=======
-precip |>
-  ggplot(aes(datetime, ReportPCP)) +
-  geom_col() +
-  scale_y_continuous(limits = c(0, .15))
->>>>>>> c9c4dd6ee9778f247e70f38abcd69cdefee9313e
-
-
-########## WIND DATA READ IN ##########
-
-k <- "Kineo_Tower_Kineo-Aum.dat"
-
-wind <- read.table(
-  k,
-  sep = ",",
-  header = TRUE,
-  skip = 1,
-  # Skip only first metadata line
-  fill = TRUE,
-  stringsAsFactors = FALSE,
-  quote = "\""
+# -----------------------------
+# GLOBAL URL LIST
+# -----------------------------
+URLS <- c(
+  "https://hbrsensor.sr.unh.edu/data/hbrloggernet/loggernetfiles_complete/LoggerNetDir/Kineo_Tower_Kineo.dat",
+  "https://hbrsensor.sr.unh.edu/data/hbrloggernet/loggernetfiles_complete/LoggerNetDir/Snowcourse_2_SS2-snowdat.dat",
+  "https://hbrsensor.sr.unh.edu/data/hbrloggernet/loggernetfiles_complete/LoggerNetDir/Snowcourse_19_SS19_soildat.dat",
+  "https://hbrsensor.sr.unh.edu/data/hbrloggernet/loggernetfiles_complete/LoggerNetDir/weir3_weir_3.dat",
+  "https://hbrsensor.sr.unh.edu/data/hbrloggernet/loggernetfiles_complete/LoggerNetDir/weir9_weir_9.dat",
+  "https://hbrsensor.sr.unh.edu/data/hbrloggernet/loggernetfiles_complete/LoggerNetDir/wxsta1_SF_Wx1_Temp_15min.dat",
+  "https://hbrsensor.sr.unh.edu/data/hbrloggernet/loggernetfiles_complete/LoggerNetDir/wxsta1_Wx_1_rain.dat",
+  "https://hbrsensor.sr.unh.edu/data/hbrloggernet/loggernetfiles_complete/LoggerNetDir/wxsta23_Wx_23_rain.dat",
+  "https://hbrsensor.sr.unh.edu/data/hbrloggernet/loggernetfiles_complete/LoggerNetDir/wxsta23_Wx_23_Temp_15_min.dat"
 )
 
-names(wind) <- gsub('"', "", names(wind))
-names(wind) <- trimws(names(wind))
+# Basin areas for mm/day conversion
+WEIR_AREA_KM2 <- c("3" = 0.424, "9" = 0.684)
 
-wind$datetime <- suppressWarnings(ymd_hms(wind$TIMESTAMP))
-
-wind <- wind |>
-  mutate(datetime = ymd_hms(TIMESTAMP), across(c(WS_ms_Avg, WS_ms_Max, WindDir), as.numeric)) |>
-  filter(!is.na(datetime))
-
-str(wind)
-
-
-######## APP TEST
-
-ui <- fluidPage(titlePanel("Hydrologic Comparison Tool"),
-                
-                sidebarLayout(
-                  sidebarPanel(
-                    checkboxGroupInput(
-                      inputId = "aspect_select",
-                      label = "Select Aspect(s):",
-                      choices = c("North" = "north", "South" = "south")
-                    ),
-                    
-                    dateRangeInput(
-                      inputId = "date_range",
-                      label = "Select Date Range:",
-                      start = Sys.Date() - 30,
-                      end   = Sys.Date()
-                    ),
-                    
-                    checkboxGroupInput(
-                      inputId = "variable_select",
-                      label = "Select Variable:",
-                      choices = c(
-                        "Streamflow" = "pressure1_Q",
-                        "Wind Speed Avg" = "WS_ms_Avg",
-                        "Wind Speed Max" = "WS_ms_Max",
-                        "Wind Direction" = "WindDir"
-                      ),
-                      selected = "pressure1_Q"
-                    )
-                  ),
-                  
-                  mainPanel(
-                    uiOutput("dynamic_plots")   # <- layout controlled by server
-                  )
-                ))
-
-server <- function(input, output, session) {
-  # ---- Reactive filtering ----
+# -----------------------------
+# READ FUNCTION (cached)
+# -----------------------------
+readHBdat <- memoise(function(url, tz = "America/New_York") {
+  lines <- readr::read_lines(curl::curl(
+    url,
+    handle = curl::new_handle(username = "capstone", password = "data2025")
+  ))
   
-  north_filtered <- reactive({
-    req(input$date_range)
+  header_idx <- which(grepl("^\"?TIMESTAMP\"?,", lines, ignore.case = TRUE))[1]
+  if (is.na(header_idx)) return(NULL)
+  
+  col_names <- gsub('"', "", lines[header_idx]) |> strsplit(",") |> unlist()
+  
+  df <- readr::read_csv(
+    I(lines[(header_idx + 2):length(lines)]),
+    col_names = col_names,
+    na = c("NaN", "NA", "")
+  )
+  
+  df |> mutate(datetime = ymd_hms(TIMESTAMP, tz = tz, quiet = TRUE)) |> filter(!is.na(datetime))
+})
+
+# -----------------------------
+# LOAD + STANDARDIZE
+# -----------------------------
+load_all_data <- function() {
+  map_df(URLS, function(u) {
+    df <- tryCatch(readHBdat(u), error = function(e) NULL)
+    if (is.null(df)) return(NULL)
     
-    streamflowNorth %>%
-      filter(datetime >= input$date_range[1],
-             datetime <= input$date_range[2])
-  })
-  
-  
-  south_filtered <- reactive({
-    req(input$date_range)
+    name <- tolower(basename(u))
     
-    streamflowSouth %>%
-      filter(datetime >= input$date_range[1],
-             datetime <= input$date_range[2])
-  })
-  
-  wind_filtered <- reactive({
-    req(input$date_range)
+    df$aspect <- case_when(
+      str_detect(name, "weir3|wxsta1|snowcourse_2") ~ "South",
+      str_detect(name, "weir9|wxsta23|snowcourse_19") ~ "North",
+      TRUE ~ "Other"
+    )
     
-    wind %>%
-      filter(datetime >= input$date_range[1],
-             datetime <= input$date_range[2])
-  })
-  
-  # ---- Dynamic Layout ----
-  
-  output$dynamic_plots <- renderUI({
-    aspects <- input$aspect_select
+    # ---- Standardize variables ----
+    df <- df |> mutate(
+      discharge_cfs = as.numeric(coalesce(pressure1_Q, Q, NA)),
+      stage_m = as.numeric(coalesce(float_stage, stage, NA)) * 0.3048,
+      precip_mm = as.numeric(coalesce(Rain, Precip, NA)),
+      air_temp_c = as.numeric(coalesce(Air_TempC_Avg, AirTC, NA)),
+      snow_depth_cm = as.numeric(coalesce(Depthscaled, SnowDepth, NA)),
+      swe_cm = as.numeric(coalesce(SWE, NA)),
+      vwc_10 = as.numeric(coalesce(TDR_10typ_vwc, NA)),
+      vwc_30 = as.numeric(coalesce(TDR_30typ_vwc, NA)),
+      vwc_50 = as.numeric(coalesce(TDR_50typ_vwc, NA)),
+      wind_speed_avg = as.numeric(coalesce(WS_ms_Avg, NA)),
+      wind_speed_max = as.numeric(coalesce(WS_ms_Max, NA)),
+      wind_dir_deg = as.numeric(coalesce(WindDir, NA))
+    )
     
-    if (length(aspects) == 2) {
-      # Two columns for each aspect
-      fluidRow(
-        column(
-          6,
-          plotOutput("streamflow_plot_north"),
-          plotOutput("wind_speed_plot_north"),
-          plotOutput("wind_dir_plot_north")
-        ),
-        column(
-          6,
-          plotOutput("streamflow_plot_south"),
-          plotOutput("wind_speed_plot_south"),
-          plotOutput("wind_dir_plot_south")
+    # mm/day conversion
+    if (str_detect(name, "weir")) {
+      id <- str_extract(name, "\\d+")
+      area <- WEIR_AREA_KM2[[id]]
+      if (!is.null(area)) {
+        df <- df |> mutate(
+          discharge_mm_day = (discharge_cfs * 0.0283168) / (area * 1e6) * 86400 * 1000
         )
-      )
-    } else if (length(aspects) == 1) {
-      if ("north" %in% aspects) {
-        fluidRow(column(
-          12,
-          plotOutput("streamflow_plot_north"),
-          plotOutput("wind_speed_plot_north"),
-          plotOutput("wind_dir_plot_north")
-        ))
-      } else {
-        fluidRow(column(
-          12,
-          plotOutput("streamflow_plot_south"),
-          plotOutput("wind_speed_plot_south"),
-          plotOutput("wind_dir_plot_south")
-        ))
+      }
+    }
+    
+    df
+  })
+}
+
+# -----------------------------
+# DAILY CUM PRECIP
+# -----------------------------
+add_cum_precip <- function(df) {
+  df |> mutate(day = as.Date(datetime)) |>
+    arrange(aspect, day, datetime) |>
+    group_by(aspect, day) |>
+    mutate(precip_cum = cumsum(replace_na(precip_mm, 0))) |>
+    ungroup()
+}
+
+# -----------------------------
+# UI
+# -----------------------------
+ui <- fluidPage(
+  titlePanel("Hubbard Brook Live Viewer"),
+  
+  sidebarLayout(
+    sidebarPanel(
+      checkboxGroupInput("vars", "Variables",
+                         choices = c(
+                           "Discharge (cfs)" = "discharge_cfs",
+                           "Discharge (mm/day)" = "discharge_mm_day",
+                           "Stage" = "stage_m",
+                           "Precip" = "precip_mm",
+                           "Cumulative Precip" = "precip_cum",
+                           "Air Temp" = "air_temp_c",
+                           "Snow Depth" = "snow_depth_cm",
+                           "Wind Speed" = "wind_speed_avg",
+                           "Wind Dir" = "wind_dir_deg",
+                           "Soil Moisture" = "soil"
+                         ), selected = "discharge_cfs"
+      ),
+      
+      checkboxGroupInput("aspect", "Aspect", choices = c("South", "North"), selected = "South"),
+      
+      checkboxGroupInput("soil_depths", "Soil Depths", choices = c("10" = "vwc_10", "30" = "vwc_30", "50" = "vwc_50"), selected = c("vwc_10")),
+      
+      dateRangeInput("dates", "Date Range", start = Sys.Date() - 14, end = Sys.Date())
+    ),
+    
+    mainPanel(uiOutput("plots"))
+  )
+)
+
+# -----------------------------
+# SERVER
+# -----------------------------
+server <- function(input, output, session) {
+  
+  data_all <- reactive({
+    invalidateLater(60000, session)
+    load_all_data()
+  })
+  
+  filtered <- reactive({
+    df <- data_all()
+    df <- df |> filter(aspect %in% input$aspect, datetime >= input$dates[1], datetime <= input$dates[2] + 1)
+    df <- add_cum_precip(df)
+    df
+  })
+  
+  output$plots <- renderUI({
+    tagList(lapply(input$vars, function(v) plotlyOutput(paste0("plot_", v))))
+  })
+  
+  observe({
+    df <- filtered()
+    
+    for (v in input$vars) {
+      local({
+        var <- v
+        output[[paste0("plot_", var)]] <- renderPlotly({
+          
+          sub <- df
+          
+          p <- plot_ly(source = "sync")
+          
+          for (asp in unique(sub$aspect)) {
+            s <- sub |> filter(aspect == asp)
+            
+            if (var == "soil") {
+              for (d in input$soil_depths) {
+                p <- add_lines(p, data = s, x = ~datetime, y = s[[d]], name = paste(asp, d))
+              }
+            } else {
+              p <- add_lines(p, data = s, x = ~datetime, y = s[[var]], name = asp)
+            }
+          }
+          
+          # assign back to p
+          p <- p |> layout(
+            title = var,
+            xaxis = list(rangeslider = list(visible = FALSE))
+          )
+          
+          p <- event_register(p, "plotly_relayout")
+          
+          return(p)
+        })
+        })
+      })
+    }
+  })
+  
+  # linked zoom
+  observeEvent(event_data("plotly_relayout", source = "sync"), {
+    ev <- event_data("plotly_relayout", source = "sync")
+    if (!is.null(ev[["xaxis.range[0]"]])) {
+      xr <- c(ev[["xaxis.range[0]"]], ev[["xaxis.range[1]"]])
+      for (v in input$vars) {
+        plotlyProxy(paste0("plot_", v), session) |> plotlyProxyInvoke("relayout", list(xaxis = list(range = xr)))
       }
     }
   })
-  
-  
-  # ---- North Plot ----
-  
-  output$streamflow_plot_north <- renderPlot({
-    if (!"pressure1_Q" %in% input$variable_select)
-      return(NULL)
-    
-    ggplot(north_filtered(), aes(datetime, pressure1_Q)) +
-      geom_line(color = "blue") +
-      labs(title = "North Aspect Streamflow", x = "Date", y = "Streamflow") +
-      theme_classic()
-  })
-  
-  
-  # ---- South Plot ----
-  
-  output$streamflow_plot_south <- renderPlot({
-    if (!"pressure1_Q" %in% input$variable_select)
-      return(NULL)
-    
-    ggplot(south_filtered(), aes(datetime, pressure1_Q)) +
-      geom_line(color = "blue") +
-      labs(title = "South Aspect Streamflow", x = "Date", y = "Streamflow") +
-      theme_classic()
-  })
-  
-  # ---- North & South Wind Speed Avg & Max Plot ----
-  output$wind_speed_plot_north <- renderPlot({
-    if (!any(c("WS_ms_Avg", "WS_ms_Max") %in% input$variable_select))
-      return(NULL)
-    
-    p <- ggplot(wind_filtered(), aes(datetime)) +
-      theme_classic() +
-      labs(
-        title = "North Aspect Wind Speed",
-        x = "Date",
-        y = "Wind Speed (m/s)",
-        color = "Legend"
-      )
-    
-    if ("WS_ms_Avg" %in% input$variable_select) {
-      p <- p + geom_line(aes(y = WS_ms_Avg, color = "Avg"))
-    }
-    if ("WS_ms_Max" %in% input$variable_select) {
-      p <- p + geom_line(aes(y = WS_ms_Max, color = "Max"))
-    }
-    
-    p + scale_color_manual(values = c("Avg" = "darkgreen", "Max" = "red"))
-  })
-  
-  output$wind_speed_plot_south <- renderPlot({
-    if (!any(c("WS_ms_Avg", "WS_ms_Max") %in% input$variable_select))
-      return(NULL)
-    
-    p <- ggplot(wind_filtered(), aes(datetime)) +
-      theme_classic() +
-      labs(
-        title = "South Aspect Wind Speed",
-        x = "Date",
-        y = "Wind Speed (m/s)",
-        color = "Legend"
-      )
-    
-    if ("WS_ms_Avg" %in% input$variable_select) {
-      p <- p + geom_line(aes(y = WS_ms_Avg, color = "Avg"))
-    }
-    if ("WS_ms_Max" %in% input$variable_select) {
-      p <- p + geom_line(aes(y = WS_ms_Max, color = "Max"))
-    }
-    
-    p + scale_color_manual(values = c("Avg" = "darkgreen", "Max" = "red"))
-  })
-  
-  # ---- North & South Wind Direction Plot ----
-  output$wind_dir_plot_north <- renderPlot({
-    if (!"WindDir" %in% input$variable_select)
-      return(NULL)
-    
-    ggplot(wind_filtered(), aes(datetime, WindDir)) +
-      geom_line(color = "purple") +
-      scale_y_continuous(
-        name = "Wind Direction",
-        breaks = seq(0, 360, by = 45),
-        labels = c("N", "NE", "E", "SE", "S", "SW", "W", "NW", "N")
-      ) +
-      labs(title = "North Aspect Wind Direction", x = "Date") +
-      theme_classic()
-  })
-  
-  output$wind_dir_plot_south <- renderPlot({
-    if (!"WindDir" %in% input$variable_select)
-      return(NULL)
-    
-    ggplot(wind_filtered(), aes(datetime, WindDir)) +
-      geom_line(color = "purple") +
-      scale_y_continuous(
-        name = "Wind Direction",
-        breaks = seq(0, 360, by = 45),
-        labels = c("N", "NE", "E", "SE", "S", "SW", "W", "NW", "N")
-      ) +
-      labs(title = "South Aspect Wind Direction", x = "Date") +
-      theme_classic()
-  })
-  
 }
 
-shinyApp(ui = ui, server = server)
+shinyApp(ui, server)
