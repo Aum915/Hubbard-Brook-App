@@ -518,11 +518,11 @@ ui <- fluidPage(
              tags$span(class = "loading-dot", "."),
              tags$span(class = "loading-dot", ".")),
     tags$div(class = "loading-subtext", 
-             "Downloading live data meow!")
+             "Downloading live data now!")
   ),
   
   theme = bs_theme(preset = 'flatly'),
-  titlePanel("Hubbard Brook Live Viewer Prototype"),
+  titlePanel("Hubbard Brook Live Viewer"),
   sidebarLayout(
     sidebarPanel(
       actionButton("refresh", "Refresh data"),
