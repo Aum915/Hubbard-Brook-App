@@ -312,14 +312,15 @@ make_event_cum_precip <- function(df, dry_gap_hours = 4) {
   df %>%
     arrange(series_label, datetime) %>%
     group_by(series_label) %>%
-    mutate(
-      precip_mm_clean = replace_na(precip_mm, 0),
-      is_wet = precip_mm_clean > 0
-    ) %>%
     group_modify(~{
-      x <- .x %>% arrange(datetime)
+      x <- .x %>%
+        arrange(datetime) %>%
+        mutate(
+          precip_mm_clean = replace_na(precip_mm, 0),
+          is_wet = precip_mm_clean > 0
+        )
       
-      event_id <- integer(nrow(x))
+      event_id <- rep(NA_integer_, nrow(x))
       current_event <- 0L
       last_wet_time <- as.POSIXct(NA)
       
@@ -330,8 +331,10 @@ make_event_cum_precip <- function(df, dry_gap_hours = 4) {
             current_event <- current_event + 1L
           }
           last_wet_time <- x$datetime[i]
-          event_id[i] <- current_event
-        } else {
+        }
+        
+        if (!is.na(last_wet_time) &&
+            as.numeric(difftime(x$datetime[i], last_wet_time, units = "hours")) < dry_gap_hours) {
           event_id[i] <- current_event
         }
       }
@@ -342,15 +345,12 @@ make_event_cum_precip <- function(df, dry_gap_hours = 4) {
         group_by(event_id) %>%
         mutate(
           precip_event_cum_mm = ifelse(
-            event_id == 0,
+            is.na(event_id),
             0,
             cumsum(precip_mm_clean)
           )
         ) %>%
-        ungroup() %>%
-        mutate(
-          precip_event_cum_mm = ifelse(is_wet, precip_event_cum_mm, 0)
-        )
+        ungroup()
     }) %>%
     ungroup()
 }
@@ -581,8 +581,8 @@ ui <- fluidPage(
                  style = "font-size: 11px; color: #888; margin-top: 5px"),
           hr(),
           selectInput(
-            "aspect", "Select Watershed Aspect",
-            choices  = c("South-facing" = "South", "North-facing" = "North", "Show both" = "Both"),
+            "aspect", "Select Location of Real Time Sites",
+            choices  = c("South-facing Sites" = "South", "North-facing Sites" = "North", "Show both" = "Both"),
             selected = "South"
           ),
           dateRangeInput("date_range", "Date range"),
