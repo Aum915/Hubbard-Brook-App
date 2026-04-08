@@ -8,7 +8,6 @@ library(shinycssloaders)
 library(bslib)
 library(thematic)
 library(later)
-library(rsconnect)
 
 # -----------------------------
 # Config
