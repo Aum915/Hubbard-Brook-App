@@ -15,6 +15,7 @@ That branch contains the working prototype for downloading and displaying live s
 ## Features
 
 - Live download of protected sensor data files
+
 - Interactive Plotly graphs
 - Linked zoom across graphs
 - South-facing, North-facing, or combined view
@@ -22,6 +23,7 @@ That branch contains the working prototype for downloading and displaying live s
 - Daily cumulative precipitation graph
 - Wind direction displayed as points
 - Soil moisture by depth
+- Soil Temperature by depth
 - Manual refresh button to redownload current files
 - Filtering to the most recent 2 months of data for improved speed
 
@@ -36,6 +38,18 @@ The app works with live data from the following Hubbard Brook sensor locations:
 - Weir 9
 - Weather Station 1
 - Weather Station 23
+- WS3 upper snow sensor
+- WS3 upper soil sensor
+
+## Known Issues
+- Loading time for the app can be long because of the extent of the data. 
+- There is no data for snow depth for the north-facing sites. 
+
+## Future Features
+
+With more time, we would incorporate Hubbard Brook specific branding. We would also, explore
+data with all the watersheds that Hubbard Brook has to make an extensive data viewer for the whole
+property. 
 
 ## Running the Project Locally
 

@@ -106,7 +106,7 @@ product_label <- function(site_type, product) {
   if (site_type == "wxsta"      && product == "precip")         return("Precipitation")
   if (site_type == "wxsta"      && product == "air_temp_15min") return("Air temperature (15-min)")
   if (site_type == "snowcourse" && product == "snowpack")       return("Snow depth")
-  if (site_type == "snowcourse" && product == "soil")           return("Soil moisture (Typical)")
+  if (site_type == "snowcourse" && product == "soil")           return("Soil moisture and temperature")
   if (site_type == "kineo"      && product == "wind")           return("Wind")
   str_to_sentence(product)
 }
@@ -245,11 +245,19 @@ standardize_dataset <- function(df, site_type, product, site_id = NA_character_)
   }
   
   if (site_type == "snowcourse" && product == "soil") {
+    t10_col <- pick_first_existing(out, c("TDR_10typ_t", "Terros_10typ_t"))
+    t30_col <- pick_first_existing(out, c("TDR_30typ_t", "Terros_30typ_t"))
+    t50_col <- pick_first_existing(out, c("TDR_50typ_t", "Terros_50typ_t"))
+    
     out <- out %>%
       mutate(
         vwc_10 = if ("TDR_10typ_vwc" %in% names(out)) suppressWarnings(as.numeric(TDR_10typ_vwc)) else NA_real_,
         vwc_30 = if ("TDR_30typ_vwc" %in% names(out)) suppressWarnings(as.numeric(TDR_30typ_vwc)) else NA_real_,
-        vwc_50 = if ("TDR_50typ_vwc" %in% names(out)) suppressWarnings(as.numeric(TDR_50typ_vwc)) else NA_real_
+        vwc_50 = if ("TDR_50typ_vwc" %in% names(out)) suppressWarnings(as.numeric(TDR_50typ_vwc)) else NA_real_,
+        
+        soil_temp_10_c = if (!is.na(t10_col)) suppressWarnings(as.numeric(.data[[t10_col]])) else NA_real_,
+        soil_temp_30_c = if (!is.na(t30_col)) suppressWarnings(as.numeric(.data[[t30_col]])) else NA_real_,
+        soil_temp_50_c = if (!is.na(t50_col)) suppressWarnings(as.numeric(.data[[t50_col]])) else NA_real_
       )
   }
   
@@ -284,7 +292,8 @@ keep_plot_cols <- function(df, site_type, product) {
   if (site_type == "snowcourse" && product == "snowpack")
     cols <- c(cols, "snow_depth_cm", "swe_cm")
   if (site_type == "snowcourse" && product == "soil")
-    cols <- c(cols, "vwc_10", "vwc_30", "vwc_50")
+    cols <- c(cols, "vwc_10", "vwc_30", "vwc_50",
+              "soil_temp_10_c", "soil_temp_30_c", "soil_temp_50_c")
   if (site_type == "kineo" && product == "wind")
     cols <- c(cols, "wind_speed_avg", "wind_speed_max", "wind_dir_deg")
   df %>% select(any_of(cols))
@@ -320,37 +329,69 @@ make_event_cum_precip <- function(df, dry_gap_hours = 4) {
           is_wet = precip_mm_clean > 0
         )
       
-      event_id <- rep(NA_integer_, nrow(x))
-      current_event <- 0L
-      last_wet_time <- as.POSIXct(NA)
+      n <- nrow(x)
+      event_id <- rep(NA_integer_, n)
+      cum_vals <- rep(0, n)
       
-      for (i in seq_len(nrow(x))) {
+      current_event <- 0L
+      running_total <- 0
+      in_event <- FALSE
+      last_wet_index <- NA_integer_
+      
+      i <- 1
+      while (i <= n) {
         if (x$is_wet[i]) {
-          if (is.na(last_wet_time) ||
-              as.numeric(difftime(x$datetime[i], last_wet_time, units = "hours")) >= dry_gap_hours) {
+          if (!in_event) {
             current_event <- current_event + 1L
+            running_total <- 0
+            in_event <- TRUE
           }
-          last_wet_time <- x$datetime[i]
-        }
-        
-        if (!is.na(last_wet_time) &&
-            as.numeric(difftime(x$datetime[i], last_wet_time, units = "hours")) < dry_gap_hours) {
+          
+          running_total <- running_total + x$precip_mm_clean[i]
           event_id[i] <- current_event
+          cum_vals[i] <- running_total
+          last_wet_index <- i
+          i <- i + 1
+          
+        } else {
+          if (!in_event) {
+            cum_vals[i] <- 0
+            i <- i + 1
+          } else {
+            dry_start <- i
+            j <- i
+            
+            while (j <= n && !x$is_wet[j]) {
+              j <- j + 1
+            }
+            
+            dry_end <- j - 1
+            
+            if (dry_start <= n && !is.na(last_wet_index)) {
+              dry_gap <- as.numeric(difftime(x$datetime[dry_end], x$datetime[last_wet_index], units = "hours"))
+            } else {
+              dry_gap <- 0
+            }
+            
+            if (dry_gap >= dry_gap_hours) {
+              cum_vals[dry_start:dry_end] <- 0
+              in_event <- FALSE
+              running_total <- 0
+            } else {
+              event_id[dry_start:dry_end] <- current_event
+              cum_vals[dry_start:dry_end] <- running_total
+            }
+            
+            i <- j
+          }
         }
       }
       
-      x$event_id <- event_id
-      
       x %>%
-        group_by(event_id) %>%
         mutate(
-          precip_event_cum_mm = ifelse(
-            is.na(event_id),
-            0,
-            cumsum(precip_mm_clean)
-          )
-        ) %>%
-        ungroup()
+          event_id = event_id,
+          precip_event_cum_mm = cum_vals
+        )
     }) %>%
     ungroup()
 }
@@ -430,6 +471,35 @@ plot_soil_multi <- function(df, depths_on = c("10","30","50"),
       p <- plotly::add_lines(p, data = sub, x = ~datetime, y = ~vwc_50,
                              name = paste0(lab, " — 50 cm"), showlegend = TRUE)
   }
+  base_plot_cfg(p)
+}
+
+plot_soil_temp_multi <- function(df, depths_on = c("10","30","50"),
+                                 title = "Soil temperature", source_id) {
+  req(nrow(df) > 0)
+  p <- plotly::plot_ly(source = source_id) %>%
+    plotly::layout(
+      title  = list(text = title),
+      xaxis  = list(title = "", rangeslider = list(visible = FALSE)),
+      yaxis  = list(title = "Soil temperature (°C)"),
+      showlegend = TRUE,
+      legend = list(orientation = "h", x = 0, y = -0.25),
+      margin = list(l = 70, r = 20, b = 95, t = 60)
+    )
+  
+  for (lab in unique(df$series_label)) {
+    sub <- df %>% filter(series_label == lab)
+    if ("10" %in% depths_on && "soil_temp_10_c" %in% names(sub))
+      p <- plotly::add_lines(p, data = sub, x = ~datetime, y = ~soil_temp_10_c,
+                             name = paste0(lab, " — 10 cm"), showlegend = TRUE)
+    if ("30" %in% depths_on && "soil_temp_30_c" %in% names(sub))
+      p <- plotly::add_lines(p, data = sub, x = ~datetime, y = ~soil_temp_30_c,
+                             name = paste0(lab, " — 30 cm"), showlegend = TRUE)
+    if ("50" %in% depths_on && "soil_temp_50_c" %in% names(sub))
+      p <- plotly::add_lines(p, data = sub, x = ~datetime, y = ~soil_temp_50_c,
+                             name = paste0(lab, " — 50 cm"), showlegend = TRUE)
+  }
+  
   base_plot_cfg(p)
 }
 
@@ -599,12 +669,13 @@ ui <- fluidPage(
               "Snow depth"                     = "snowdepth",
               "Wind speed (avg/max)"           = "wind_speed",
               "Wind direction"                 = "wind_dir",
-              "Soil moisture (10/30/50 cm)"    = "soil"
+              "Soil moisture (10/30/50 cm)"    = "soil",
+              "Soil temperature (10/30/50 cm)" = "soil_temp"
             ),
             selected = c("discharge_mmday", "precip", "airtemp")
           ),
           conditionalPanel(
-            condition = "input.graphs_on.indexOf('soil') >= 0",
+            condition = "input.graphs_on.indexOf('soil') >= 0 || input.graphs_on.indexOf('soil_temp') >= 0",
             checkboxGroupInput(
               "soil_depths", "Soil depths",
               choices  = c("10 cm" = "10", "30 cm" = "30", "50 cm" = "50"),
@@ -624,7 +695,7 @@ ui <- fluidPage(
         column(
           12,
           h3("Metadata"),
-          p("This tab is intended for data source descriptions, caveats on interpretation, and links to published datasets."),
+          p("This tab is intended for data source descriptions, caveats on interpretation, and references to published datasets."),
           p("All displayed data are live data feeds. QC'd and fully published datasets are available through December 31, 2025."),
           tags$ul(
             tags$li("South-facing precipitation: Weather station 1"),
@@ -727,7 +798,7 @@ server <- function(input, output, session) {
   
   observe({
     max_date <- Sys.Date()
-    min_date <- max_date - 90
+    min_date <- max_date - DEFAULT_LOOKBACK_DAYS
     
     updateDateRangeInput(
       session, "date_range",
@@ -776,7 +847,7 @@ server <- function(input, output, session) {
     req(input$date_range)
     
     max_allowed <- Sys.Date()
-    min_allowed <- max_allowed - 90
+    min_allowed <- max_allowed - DEFAULT_LOOKBACK_DAYS
     
     start <- max(as.Date(input$date_range[1]), min_allowed)
     end   <- min(as.Date(input$date_range[2]), max_allowed)
@@ -952,6 +1023,13 @@ server <- function(input, output, session) {
     df <- filter_by_date(datasets()$soil)
     req(!is.null(df), nrow(df) > 0)
     plot_soil_multi(df, depths_on = input$soil_depths, source_id = "plot_soil")
+  })
+  
+  output$plot_soil_temp <- renderPlotly({
+    req("soil_temp" %in% input$graphs_on, input$soil_depths)
+    df <- filter_by_date(datasets()$soil)
+    req(!is.null(df), nrow(df) > 0)
+    plot_soil_temp_multi(df, depths_on = input$soil_depths, source_id = "plot_soil_temp")
   })
   
   output$status <- renderText({
