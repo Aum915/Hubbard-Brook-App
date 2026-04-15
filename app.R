@@ -1,4 +1,4 @@
-# app.R ---------------------------------------------------------------
+# Required Libraries
 library(tidyverse)
 library(lubridate)
 library(shiny)
@@ -11,12 +11,25 @@ library(later)
 
 # -----------------------------
 # Config
+#
+# SNOW_SPIKE_CUTOFF_CM is a variable used for QC of snow depth data. 
+# The DEFAULT_LOOKBACK_DAYS variable is used for setting the date range 
+# in the app's UI, as well as filtering the data to minimize loading times. (Lines 802, 851)
+#
 # -----------------------------
-SNOW_SPIKE_CUTOFF_CM <- 125
-DEFAULT_LOOKBACK_DAYS <- 90
-
+SNOW_SPIKE_CUTOFF_CM <- 125 
+DEFAULT_LOOKBACK_DAYS <- 90 
+                            
 # -----------------------------
 # Accessing credentials
+#
+# Using the station_key list, the app retrieves credentials for each variable from the external
+# credentials file. If any stations are missing credentials, the system will return the error,
+# "Missing credentials for: *station*"
+#
+# To add a new data set, add credentials into the external .Renviron file. Add the station key to all of the 
+#station_keys lists as well as file indexes.
+#
 # -----------------------------
 station_keys <- c(
   "kineo", "snow19", "southsnow", "southsoil",
@@ -45,10 +58,11 @@ if (any(missing_cfg)) {
   stop(paste("Missing credentials for:", paste(names(missing_cfg)[missing_cfg], collapse = ", ")))
 }
 
-DATA_DIR <- "."
-
 # -----------------------------
 # Weir basin areas (km^2)
+#
+# Calculated areas for watersheds 3 and 9. These areas are used to compute rainfall mm/day.
+#
 # -----------------------------
 WEIR_AREA_KM2 <- c(
   "3" = 0.424,
@@ -57,6 +71,8 @@ WEIR_AREA_KM2 <- c(
 
 # -----------------------------
 # Downloading / caching live files
+#
+# 
 # -----------------------------
 download_live_file <- function(station_key, file_name) {
   cfg <- get_station_config()[[station_key]]
@@ -157,6 +173,9 @@ build_file_index <- function() {
 
 # -----------------------------
 # TOA5 reader
+#
+# This section contains information on reading in the HB data file format and setting the time zone.
+#
 # -----------------------------
 read_toa5_table <- function(path, tz = "America/New_York") {
   header_lines <- readLines(path, n = 6, warn = FALSE)
@@ -186,6 +205,11 @@ read_toa5_table <- function(path, tz = "America/New_York") {
 
 # -----------------------------
 # Column picking helper
+#
+# This function works similarly to tidyverse's select function, and is used in the Standardization 
+# section below. It uses the user selected variables to select the correct columns in the corresponding 
+# data sets.
+#
 # -----------------------------
 pick_first_existing <- function(df, candidates) {
   hit <- candidates[candidates %in% names(df)]
@@ -301,6 +325,13 @@ keep_plot_cols <- function(df, site_type, product) {
 
 # -----------------------------
 # Precip helpers
+#
+# The make_daily_cum_precip function calculates the daily sum of precipitation. Data is filtered by 
+# day, NA's are set to 0, and then non-zero values are summed. 
+#
+# The make_event_cum_precip function calculates the total rainfall per event. Events are seperated by 
+# 4 hour long dry periods. To change the dry-length requirement, simply change the value in the function parameters.
+# 
 # -----------------------------
 make_daily_cum_precip <- function(df) {
   if (is.null(df) || nrow(df) == 0) return(df)
