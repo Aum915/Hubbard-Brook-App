@@ -15,7 +15,6 @@ That branch contains the working prototype for downloading and displaying live s
 ## Features
 
 - Live download of protected sensor data files
-
 - Interactive Plotly graphs
 - Linked zoom across graphs
 - South-facing, North-facing, or combined view
