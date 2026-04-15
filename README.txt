@@ -4,7 +4,7 @@ The Hubbard Brook Live Viewer is an interactive Shiny dashboard for viewing envi
 
 ## Shiny App Website
 
-Live app: https://rxsf5d-will-videll.shinyapps.io/hubbard-brook-app/
+Live app: https://vt-eds.shinyapps.io/HBRealTimeViewer/
 
 ## Important Branch Information
 
