@@ -1,4 +1,4 @@
-# app.R ---------------------------------------------------------------
+# Required Libraries
 library(tidyverse)
 library(lubridate)
 library(shiny)
@@ -11,12 +11,23 @@ library(later)
 
 # -----------------------------
 # Config
+#
+# SNOW_SPIKE_CUTOFF_CM is a variable used for QC of snow depth data. 
+# The DEFAULT_LOOKBACK_DAYS variable is used for setting the date range 
+# in the app's UI, as well as filtering the data to minimize loading times. (Lines 802, 851)
 # -----------------------------
-SNOW_SPIKE_CUTOFF_CM <- 125
-DEFAULT_LOOKBACK_DAYS <- 90
-
+SNOW_SPIKE_CUTOFF_CM <- 125 
+DEFAULT_LOOKBACK_DAYS <- 90 
+                            
 # -----------------------------
 # Accessing credentials
+#
+# Using the station_key list, the app retrieves credentials for each variable from the external
+# credentials file. If any stations are missing credentials, the system will return the error,
+# "Missing credentials for: *station*"
+#
+# To add a new data set, add credentials into the external .Renviron file. Add the station key to all of the 
+# station_keys lists as well as file indexes.
 # -----------------------------
 station_keys <- c(
   "kineo", "snow19", "southsnow", "southsoil",
@@ -45,10 +56,10 @@ if (any(missing_cfg)) {
   stop(paste("Missing credentials for:", paste(names(missing_cfg)[missing_cfg], collapse = ", ")))
 }
 
-DATA_DIR <- "."
-
 # -----------------------------
 # Weir basin areas (km^2)
+#
+# Calculated areas for watersheds 3 and 9. These areas are used to compute rainfall mm/day.
 # -----------------------------
 WEIR_AREA_KM2 <- c(
   "3" = 0.424,
@@ -57,6 +68,9 @@ WEIR_AREA_KM2 <- c(
 
 # -----------------------------
 # Downloading / caching live files
+#
+# Downloads live files all at once when the app loads. Includes a fail safe if authentication
+# or file download fails and defaults to error message.
 # -----------------------------
 download_live_file <- function(station_key, file_name) {
   cfg <- get_station_config()[[station_key]]
@@ -91,6 +105,11 @@ get_live_file <- function(station_key, file_name, live_file_cache = NULL) {
 
 # -----------------------------
 # File index
+# 
+# empty_file_index() returns a blank tibble with the expected column structure.
+# build_file_index() constructs the full index of all stations, mapping each to its
+# site type, product, display name, and downloaded file path.
+# product_label() returns a human-readable label for each site type / product combination.
 # -----------------------------
 empty_file_index <- function() {
   tibble(
@@ -157,6 +176,8 @@ build_file_index <- function() {
 
 # -----------------------------
 # TOA5 reader
+#
+# This section contains information on reading in the HB data file format and setting the time zone.
 # -----------------------------
 read_toa5_table <- function(path, tz = "America/New_York") {
   header_lines <- readLines(path, n = 6, warn = FALSE)
@@ -186,6 +207,10 @@ read_toa5_table <- function(path, tz = "America/New_York") {
 
 # -----------------------------
 # Column picking helper
+#
+# This function works similarly to tidyverse's select function, and is used in the Standardization 
+# section below. It uses the user selected variables to select the correct columns in the corresponding 
+# data sets.
 # -----------------------------
 pick_first_existing <- function(df, candidates) {
   hit <- candidates[candidates %in% names(df)]
@@ -194,6 +219,8 @@ pick_first_existing <- function(df, candidates) {
 
 # -----------------------------
 # Standardization
+#
+# Processes data in the files
 # -----------------------------
 standardize_dataset <- function(df, site_type, product, site_id = NA_character_) {
   out <- df %>% select(datetime, everything())
@@ -301,6 +328,12 @@ keep_plot_cols <- function(df, site_type, product) {
 
 # -----------------------------
 # Precip helpers
+#
+# The make_daily_cum_precip function calculates the daily sum of precipitation. Data is filtered by 
+# day, NA's are set to 0, and then non-zero values are summed. 
+#
+# The make_event_cum_precip function calculates the total rainfall per event. Events are seperated by 
+# 4 hour long dry periods. To change the dry-length requirement, simply change the value in the function parameters.
 # -----------------------------
 make_daily_cum_precip <- function(df) {
   if (is.null(df) || nrow(df) == 0) return(df)
@@ -398,6 +431,12 @@ make_event_cum_precip <- function(df, dry_gap_hours = 4) {
 
 # -----------------------------
 # Plot helpers
+#
+# base_plot_cfg() applies shared Plotly config to all plots (removes logo and unneeded toolbar buttons).
+# plot_lines_multi() renders a multi-series line chart for a given y column.
+# plot_bars_multi() renders a multi-series bar chart (overlapping, semi-transparent) for a given y column.
+# plot_soil_multi() renders multi-depth VWC line traces, one per selected depth.
+# plot_soil_temp_multi() renders multi-depth soil temperature line traces, one per selected depth.
 # -----------------------------
 base_plot_cfg <- function(p) {
   p %>% plotly::config(displaylogo = FALSE,
@@ -723,9 +762,11 @@ ui <- fluidPage(
 # -----------------------------
 server <- function(input, output, session) {
   
+  # Stores and holds downloaded file paths
   live_file_cache <- reactiveValues()
   file_index <- reactiveVal(empty_file_index())
   
+  # Clear file cache and redownloads all files when user clicks "Refresh data" button
   refresh_index <- function() {
     keys <- names(reactiveValuesToList(live_file_cache))
     for (k in keys) live_file_cache[[k]] <- NULL
@@ -738,6 +779,7 @@ server <- function(input, output, session) {
     file_index(idx)
   }
   
+  # Looks up the local file path for a given site type, key, and product.
   selected_path <- function(site_type, site_key, product) {
     idx <- file_index()
     sub <- idx %>% filter(site_type == !!site_type,
@@ -747,12 +789,15 @@ server <- function(input, output, session) {
     character(0)
   }
   
+  # Extracts the numeric site ID from a site key string (ex. weir3 -> 3)
   site_id_from_key <- function(site_key) {
     if (is.na(site_key) || !nzchar(site_key) || site_key %in% c("kineo_tower", "southsnow", "southsoil"))
       return(NA_character_)
     str_match(site_key, "^(weir|wxsta|snowcourse)(\\d+)$")[, 3]
   }
   
+  # Reads, standardizes, and trims a single station file to plot-ready columns.
+  # Returns NULL if file is missing or unreadable
   load_one <- function(site_type, site_key, product, label) {
     p <- selected_path(site_type, site_key, product)
     if (length(p) != 1 || is.na(p) || !file.exists(p)) return(NULL)
@@ -764,6 +809,8 @@ server <- function(input, output, session) {
     df
   }
   
+  # Reactive that loads all station datasets at once into a named list. 
+  # Only reloads when refresh button is clicked.
   all_data <- reactive({
     idx <- file_index()
     req(nrow(idx) > 0, any(!is.na(idx$path)))
@@ -776,11 +823,13 @@ server <- function(input, output, session) {
       temp23     = load_one("wxsta",      "wxsta23",      "air_temp_15min","Weather station 23"),
       southsnow  = load_one("snowcourse", "southsnow",    "snowpack",      "South snow sensor"),
       southsoil  = load_one("snowcourse", "southsoil",    "soil",          "South soil sensor"),
-      northsoil  = load_one("snowcourse", "snowcourse19", "soil",          "Snowcourse 19"),
+      northsoil  = load_one("snowcourse", "snowcourse19", "soil",          "North soil sensor"),
       kineo      = load_one("kineo",      "kineo_tower",  "wind",          "Kineo Tower")
     )
   })
   
+  # Part of UI. Loading overlay (loading screen) is hidden after a delay to ensure all data has been downloaded
+  # and UI has rendered
   observeEvent(TRUE, {
     refresh_index()
     later::later(function() {
@@ -796,6 +845,7 @@ server <- function(input, output, session) {
     }, delay = 0.5)
   })
   
+  # Date range initialization
   observe({
     max_date <- Sys.Date()
     min_date <- max_date - DEFAULT_LOOKBACK_DAYS
@@ -809,6 +859,7 @@ server <- function(input, output, session) {
     )
   })
   
+  # Groups datasets based on selected aspect
   datasets <- reactive({
     d <- all_data()
     
@@ -842,6 +893,7 @@ server <- function(input, output, session) {
     }
   })
   
+  # Filters dataset by the date range
   filter_by_date <- function(df) {
     if (is.null(df) || nrow(df) == 0) return(df)
     req(input$date_range)
@@ -859,6 +911,7 @@ server <- function(input, output, session) {
       )
   }
   
+  # Renders plotly output per variable
   output$plots_ui <- renderUI({
     req(input$graphs_on)
     tagList(lapply(input$graphs_on, function(id) {
@@ -866,6 +919,7 @@ server <- function(input, output, session) {
     }))
   })
   
+  # Synced zooming
   observers <- reactiveValues()
   is_syncing <- reactiveVal(FALSE)
   
@@ -906,6 +960,7 @@ server <- function(input, output, session) {
     }
   }, ignoreInit = FALSE)
   
+  # Plot rendering. Has an error message if data is missing using validate()
   output$plot_discharge <- renderPlotly({
     req("discharge" %in% input$graphs_on)
     df <- filter_by_date(datasets()$weir)
@@ -1032,6 +1087,7 @@ server <- function(input, output, session) {
     plot_soil_temp_multi(df, depths_on = input$soil_depths, source_id = "plot_soil_temp")
   })
   
+  # Status bar on bottom left-hand side
   output$status <- renderText({
     idx <- file_index()
     n_ok <- sum(!is.na(idx$path))
