@@ -179,7 +179,6 @@ build_file_index <- function() {
 #
 # This section creates a function to read  and format the HB data file format and set the time zone.
 # This function is used on every data set for consistent formatting.
-#
 # -----------------------------
 read_toa5_table <- function(path, tz = "America/New_York") {
   header_lines <- readLines(path, n = 6, warn = FALSE)
@@ -213,7 +212,6 @@ read_toa5_table <- function(path, tz = "America/New_York") {
 # This function works similarly to tidyverse's select function, and is used in the Standardization 
 # section below. It uses the user selected variables to select the correct columns in the corresponding 
 # data sets.
-#
 # -----------------------------
 pick_first_existing <- function(df, candidates) {
   hit <- candidates[candidates %in% names(df)]
@@ -313,7 +311,6 @@ standardize_dataset <- function(df, site_type, product, site_id = NA_character_)
 # This section creates a function that is used to reduce the size of data and is used in the server. 
 # It selects only the required columns for the selected data set. The “datetime” column is consistent 
 # among all data sets.
-#
 # -----------------------------
 keep_plot_cols <- function(df, site_type, product) {
   if (is.null(df)) return(df)
@@ -342,7 +339,6 @@ keep_plot_cols <- function(df, site_type, product) {
 #
 # The make_event_cum_precip function calculates the total rainfall per event. Events are seperated by 
 # 4 hour long dry periods. To change the dry-length requirement, simply change the value in the function parameters.
-#
 # -----------------------------
 make_daily_cum_precip <- function(df) {
   if (is.null(df) || nrow(df) == 0) return(df)
@@ -446,7 +442,6 @@ make_event_cum_precip <- function(df, dry_gap_hours = 4) {
 # plot_bars_multi() renders a multi-series bar chart (overlapping, semi-transparent) for a given y column.
 # plot_soil_multi() renders multi-depth VWC line traces, one per selected depth.
 # plot_soil_temp_multi() renders multi-depth soil temperature line traces, one per selected depth.
-#
 # -----------------------------
 base_plot_cfg <- function(p) {
   p |> plotly::config(displaylogo = FALSE,
