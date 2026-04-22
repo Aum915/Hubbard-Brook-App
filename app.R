@@ -18,7 +18,7 @@ library(later)
 # -----------------------------
 SNOW_SPIKE_CUTOFF_CM <- 125 
 DEFAULT_LOOKBACK_DAYS <- 90 
-                            
+
 # -----------------------------
 # Accessing credentials
 #
@@ -30,7 +30,7 @@ DEFAULT_LOOKBACK_DAYS <- 90
 # station_keys lists as well as file indexes.
 # -----------------------------
 station_keys <- c(
-  "kineo", "snow19", "southsnow", "southsoil",
+  "kineo", "snow19", "southsnow", "southsoil", "northsnow",
   "weir3", "weir9", "temp1", "temp23", "rain1", "rain23"
 )
 
@@ -132,16 +132,17 @@ product_label <- function(site_type, product) {
 
 build_file_index <- function() {
   tibble(
-    station_key = c("kineo","snow19","southsnow","southsoil","weir3","weir9","temp1","temp23","rain1","rain23"),
-    site_type   = c("kineo","snowcourse","snowcourse","snowcourse","weir","weir","wxsta","wxsta","wxsta","wxsta"),
-    site_id     = c(NA,"19","3","3","3","9","1","23","1","23"),
-    product     = c("wind","soil","snowpack","soil","stream","stream",
+    station_key = c("kineo","snow19","southsnow","southsoil","northsnow","weir3","weir9","temp1","temp23","rain1","rain23"),
+    site_type   = c("kineo","snowcourse","snowcourse","snowcourse","snowcourse","weir","weir","wxsta","wxsta","wxsta","wxsta"),
+    site_id     = c(NA,"19","3","3","19","3","9","1","23","1","23"),
+    product     = c("wind","soil","snowpack","soil","snowpack","stream","stream",
                     "air_temp_15min","air_temp_15min","precip","precip"),
     file_name   = c(
       "Kineo_Tower_Kineo.dat",
       "Snowcourse_19_SS19_soildat.dat",
       "Water_table_WS3upper_WS_3Up_snowdat_15min.dat",
       "Water_table_WS3upper_WS_3up_soildat.dat",
+      "Snowcourse_19_SS19-snowdat.dat",
       "weir3_weir_3.dat",
       "weir9_weir_9.dat",
       "wxsta1_SF_Wx1_Temp_15min.dat",
@@ -156,6 +157,7 @@ build_file_index <- function() {
       site_key = case_when(
         station_key == "southsnow" ~ "southsnow",
         station_key == "southsoil" ~ "southsoil",
+        station_key == "northsnow" ~ "snowcourse19_snow",
         site_type == "kineo" ~ "kineo_tower",
         TRUE ~ paste0(site_type, site_id)
       ),
@@ -163,6 +165,7 @@ build_file_index <- function() {
         site_type == "kineo" & station_key == "kineo" ~ "Kineo Tower",
         station_key == "southsnow" ~ "South-facing snow sensor (WS3 upper)",
         station_key == "southsoil" ~ "South-facing soil sensor (WS3 upper)",
+        station_key == "northsnow" ~ "North-facing snow sensor (Snowcourse 19)",
         site_type == "snowcourse" ~ paste0("Snowcourse ", site_id),
         site_type == "weir" ~ paste0("Weir ", site_id),
         site_type == "wxsta" ~ paste0("Weather station ", site_id)
@@ -445,7 +448,7 @@ make_event_cum_precip <- function(df, dry_gap_hours = 4) {
 # -----------------------------
 base_plot_cfg <- function(p) {
   p |> plotly::config(displaylogo = FALSE,
-                       modeBarButtonsToRemove = c("sendDataToCloud","toImage"))
+                      modeBarButtonsToRemove = c("sendDataToCloud","toImage"))
 }
 
 plot_lines_multi <- function(df, y, title, ylab, source_id) {
@@ -749,6 +752,7 @@ ui <- fluidPage(
             tags$li("South-facing air temperature: Weather station 1"),
             tags$li("North-facing air temperature: Weather station 23"),
             tags$li("South-facing snow: WS3 upper snow sensor"),
+            tags$li("North-facing snow: Snowcourse 19"),
             tags$li("South-facing soil: WS3 upper soil sensor"),
             tags$li("North-facing soil: Snowcourse 19"),
             tags$li("Wind: Kineo Tower")
@@ -788,15 +792,15 @@ server <- function(input, output, session) {
   selected_path <- function(site_type, site_key, product) {
     idx <- file_index()
     sub <- idx |> filter(site_type == !!site_type,
-                          site_key  == !!site_key,
-                          product   == !!product)
+                         site_key  == !!site_key,
+                         product   == !!product)
     if (nrow(sub) > 0) return(sub$path[[1]])
     character(0)
   }
   
   # Extracts the numeric site ID from a site key string (ex. weir3 -> 3)
   site_id_from_key <- function(site_key) {
-    if (is.na(site_key) || !nzchar(site_key) || site_key %in% c("kineo_tower", "southsnow", "southsoil"))
+    if (is.na(site_key) || !nzchar(site_key) || site_key %in% c("kineo_tower", "southsnow", "southsoil", "snowcourse19_snow"))
       return(NA_character_)
     str_match(site_key, "^(weir|wxsta|snowcourse)(\\d+)$")[, 3]
   }
@@ -820,16 +824,17 @@ server <- function(input, output, session) {
     idx <- file_index()
     req(nrow(idx) > 0, any(!is.na(idx$path)))
     list(
-      weir3      = load_one("weir",       "weir3",        "stream",        "Weir 3"),
-      weir9      = load_one("weir",       "weir9",        "stream",        "Weir 9"),
-      precip1    = load_one("wxsta",      "wxsta1",       "precip",        "Weather station 1"),
-      precip23   = load_one("wxsta",      "wxsta23",      "precip",        "Weather station 23"),
-      temp1      = load_one("wxsta",      "wxsta1",       "air_temp_15min","Weather station 1"),
-      temp23     = load_one("wxsta",      "wxsta23",      "air_temp_15min","Weather station 23"),
-      southsnow  = load_one("snowcourse", "southsnow",    "snowpack",      "South snow sensor"),
-      southsoil  = load_one("snowcourse", "southsoil",    "soil",          "South soil sensor"),
-      northsoil  = load_one("snowcourse", "snowcourse19", "soil",          "North soil sensor"),
-      kineo      = load_one("kineo",      "kineo_tower",  "wind",          "Kineo Tower")
+      weir3      = load_one("weir",       "weir3",            "stream",        "Weir 3"),
+      weir9      = load_one("weir",       "weir9",            "stream",        "Weir 9"),
+      precip1    = load_one("wxsta",      "wxsta1",           "precip",        "Weather station 1"),
+      precip23   = load_one("wxsta",      "wxsta23",          "precip",        "Weather station 23"),
+      temp1      = load_one("wxsta",      "wxsta1",           "air_temp_15min","Weather station 1"),
+      temp23     = load_one("wxsta",      "wxsta23",          "air_temp_15min","Weather station 23"),
+      southsnow  = load_one("snowcourse", "southsnow",        "snowpack",      "South snow sensor"),
+      northsnow  = load_one("snowcourse", "snowcourse19_snow","snowpack",      "North snow sensor"),
+      southsoil  = load_one("snowcourse", "southsoil",        "soil",          "South soil sensor"),
+      northsoil  = load_one("snowcourse", "snowcourse19",     "soil",          "North soil sensor"),
+      kineo      = load_one("kineo",      "kineo_tower",      "wind",          "Kineo Tower")
     )
   })
   
@@ -873,7 +878,7 @@ server <- function(input, output, session) {
         weir     = bind_rows(d$weir3, d$weir9),
         precip   = bind_rows(d$precip1, d$precip23),
         airtemp  = bind_rows(d$temp1, d$temp23),
-        snowpack = d$southsnow,
+        snowpack = bind_rows(d$southsnow, d$northsnow),
         soil     = bind_rows(d$southsoil, d$northsoil),
         kineo    = d$kineo
       )
@@ -891,7 +896,7 @@ server <- function(input, output, session) {
         weir     = d$weir9,
         precip   = d$precip23,
         airtemp  = d$temp23,
-        snowpack = NULL,
+        snowpack = d$northsnow,
         soil     = d$northsoil,
         kineo    = d$kineo
       )
