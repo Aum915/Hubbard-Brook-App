@@ -823,7 +823,7 @@ server <- function(input, output, session) {
       temp23     = load_one("wxsta",      "wxsta23",      "air_temp_15min","Weather station 23"),
       southsnow  = load_one("snowcourse", "southsnow",    "snowpack",      "South snow sensor"),
       southsoil  = load_one("snowcourse", "southsoil",    "soil",          "South soil sensor"),
-      northsoil  = load_one("snowcourse", "snowcourse19", "soil",          "Snowcourse 19"),
+      northsoil  = load_one("snowcourse", "snowcourse19", "soil",          "North soil sensor"),
       kineo      = load_one("kineo",      "kineo_tower",  "wind",          "Kineo Tower")
     )
   })
