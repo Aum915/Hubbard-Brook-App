@@ -149,8 +149,8 @@ build_file_index <- function() {
       "wxsta1_precip_Wx_1_rain.dat",
       "wxsta23_Wx_23_rain.dat"
     )
-  ) %>%
-    rowwise() %>%
+  ) |>
+    rowwise() |>
     mutate(
       path = NA_character_,
       site_key = case_when(
@@ -168,8 +168,8 @@ build_file_index <- function() {
         site_type == "wxsta" ~ paste0("Weather station ", site_id)
       ),
       product_display = product_label(site_type, product)
-    ) %>%
-    ungroup() %>%
+    ) |>
+    ungroup() |>
     select(path, file = file_name, file_l = file_name, station_key,
            site_type, site_id, site_key, site_display, product, product_display)
 }
@@ -177,7 +177,9 @@ build_file_index <- function() {
 # -----------------------------
 # TOA5 reader
 #
-# This section contains information on reading in the HB data file format and setting the time zone.
+# This section creates a function to read  and format the HB data file format and set the time zone.
+# This function is used on every data set for consistent formatting.
+#
 # -----------------------------
 read_toa5_table <- function(path, tz = "America/New_York") {
   header_lines <- readLines(path, n = 6, warn = FALSE)
@@ -196,12 +198,12 @@ read_toa5_table <- function(path, tz = "America/New_York") {
   
   df <- read.table(path, sep = ",", header = FALSE, skip = skip_n,
                    col.names = col_names, fill = TRUE,
-                   stringsAsFactors = FALSE, quote = "\"") %>% as_tibble()
+                   stringsAsFactors = FALSE, quote = "\"") |> as_tibble()
   
   if (!("TIMESTAMP" %in% names(df))) stop("TIMESTAMP missing after read: ", path)
   
-  df %>%
-    mutate(datetime = ymd_hms(TIMESTAMP, tz = tz, quiet = TRUE)) %>%
+  df |>
+    mutate(datetime = ymd_hms(TIMESTAMP, tz = tz, quiet = TRUE)) |>
     filter(!is.na(datetime))
 }
 
@@ -211,6 +213,7 @@ read_toa5_table <- function(path, tz = "America/New_York") {
 # This function works similarly to tidyverse's select function, and is used in the Standardization 
 # section below. It uses the user selected variables to select the correct columns in the corresponding 
 # data sets.
+#
 # -----------------------------
 pick_first_existing <- function(df, candidates) {
   hit <- candidates[candidates %in% names(df)]
@@ -223,12 +226,12 @@ pick_first_existing <- function(df, candidates) {
 # Processes data in the files
 # -----------------------------
 standardize_dataset <- function(df, site_type, product, site_id = NA_character_) {
-  out <- df %>% select(datetime, everything())
+  out <- df |> select(datetime, everything())
   
   if (site_type == "weir" && product == "stream") {
     q_col <- pick_first_existing(out, c("pressure1_Q","Q","Discharge","discharge_cfs"))
     stage_col <- pick_first_existing(out, c("float_stage","pressure1_stage","pressure1_rawdepth","stage","Stage"))
-    out <- out %>%
+    out <- out |>
       mutate(
         discharge_cfs = if (!is.na(q_col)) suppressWarnings(as.numeric(.data[[q_col]])) else NA_real_,
         stage_ft      = if (!is.na(stage_col)) suppressWarnings(as.numeric(.data[[stage_col]])) else NA_real_,
@@ -236,7 +239,7 @@ standardize_dataset <- function(df, site_type, product, site_id = NA_character_)
       )
     area_km2 <- WEIR_AREA_KM2[[as.character(site_id)]]
     if (is.null(area_km2) || is.na(area_km2)) area_km2 <- NA_real_
-    out <- out %>%
+    out <- out |>
       mutate(
         discharge_mm_day = if (is.na(area_km2)) NA_real_ else {
           area_m2 <- area_km2 * 1e6
@@ -248,24 +251,24 @@ standardize_dataset <- function(df, site_type, product, site_id = NA_character_)
   
   if (site_type == "wxsta" && product == "precip") {
     p_col <- pick_first_existing(out, c("ReportPCP","Precip","precip","Rain","rain"))
-    out <- out %>%
+    out <- out |>
       mutate(precip_mm = if (!is.na(p_col)) suppressWarnings(as.numeric(.data[[p_col]])) else NA_real_)
   }
   
   if (site_type == "wxsta" && product %in% c("air_temp_15min","air_temp")) {
     t_col <- pick_first_existing(out, c("Air_TempC_Avg","RH_airtemp","ActTemp","AirTC","Ta"))
-    out <- out %>%
+    out <- out |>
       mutate(air_temp_c = if (!is.na(t_col)) suppressWarnings(as.numeric(.data[[t_col]])) else NA_real_)
   }
   
   if (site_type == "snowcourse" && product == "snowpack") {
     d_col <- pick_first_existing(out, c("Depthscaled","SnowDepth","snow_depth"))
     s_col <- pick_first_existing(out, c("SWE","swe"))
-    out <- out %>%
+    out <- out |>
       mutate(
         snow_depth_cm = if (!is.na(d_col)) suppressWarnings(as.numeric(.data[[d_col]])) else NA_real_,
         swe_cm        = if (!is.na(s_col)) suppressWarnings(as.numeric(.data[[s_col]])) else NA_real_
-      ) %>%
+      ) |>
       mutate(
         snow_depth_cm = ifelse(snow_depth_cm > SNOW_SPIKE_CUTOFF_CM, NA_real_, snow_depth_cm)
       )
@@ -276,7 +279,7 @@ standardize_dataset <- function(df, site_type, product, site_id = NA_character_)
     t30_col <- pick_first_existing(out, c("TDR_30typ_t", "Terros_30typ_t"))
     t50_col <- pick_first_existing(out, c("TDR_50typ_t", "Terros_50typ_t"))
     
-    out <- out %>%
+    out <- out |>
       mutate(
         vwc_10 = if ("TDR_10typ_vwc" %in% names(out)) suppressWarnings(as.numeric(TDR_10typ_vwc)) else NA_real_,
         vwc_30 = if ("TDR_30typ_vwc" %in% names(out)) suppressWarnings(as.numeric(TDR_30typ_vwc)) else NA_real_,
@@ -293,7 +296,7 @@ standardize_dataset <- function(df, site_type, product, site_id = NA_character_)
     max_col <- pick_first_existing(out, c("WS_ms_Max","WS_Max","WindSpd_Max"))
     dir_col <- pick_first_existing(out, c("WindDir","Wind_Dir","WD","WD_deg",
                                           "WindDirection","Wind_Direction","WD_Avg","WindDir_Avg"))
-    out <- out %>%
+    out <- out |>
       mutate(
         wind_speed_avg = if (!is.na(avg_col)) suppressWarnings(as.numeric(.data[[avg_col]])) else NA_real_,
         wind_speed_max = if (!is.na(max_col)) suppressWarnings(as.numeric(.data[[max_col]])) else NA_real_,
@@ -306,6 +309,11 @@ standardize_dataset <- function(df, site_type, product, site_id = NA_character_)
 
 # -----------------------------
 # Keep only plot-relevant columns
+#
+# This section creates a function that is used to reduce the size of data and is used in the server. 
+# It selects only the required columns for the selected data set. The “datetime” column is consistent 
+# among all data sets.
+#
 # -----------------------------
 keep_plot_cols <- function(df, site_type, product) {
   if (is.null(df)) return(df)
@@ -323,7 +331,7 @@ keep_plot_cols <- function(df, site_type, product) {
               "soil_temp_10_c", "soil_temp_30_c", "soil_temp_50_c")
   if (site_type == "kineo" && product == "wind")
     cols <- c(cols, "wind_speed_avg", "wind_speed_max", "wind_dir_deg")
-  df %>% select(any_of(cols))
+  df |> select(any_of(cols))
 }
 
 # -----------------------------
@@ -334,29 +342,30 @@ keep_plot_cols <- function(df, site_type, product) {
 #
 # The make_event_cum_precip function calculates the total rainfall per event. Events are seperated by 
 # 4 hour long dry periods. To change the dry-length requirement, simply change the value in the function parameters.
+#
 # -----------------------------
 make_daily_cum_precip <- function(df) {
   if (is.null(df) || nrow(df) == 0) return(df)
-  df %>%
-    mutate(day = as.Date(datetime)) %>%
-    arrange(series_label, day, datetime) %>%
-    group_by(series_label, day) %>%
+  df |>
+    mutate(day = as.Date(datetime)) |>
+    arrange(series_label, day, datetime) |>
+    group_by(series_label, day) |>
     mutate(
       precip_mm_clean   = replace_na(precip_mm, 0),
       precip_cum_day_mm = cumsum(precip_mm_clean)
-    ) %>%
+    ) |>
     ungroup()
 }
 
 make_event_cum_precip <- function(df, dry_gap_hours = 4) {
   if (is.null(df) || nrow(df) == 0) return(df)
   
-  df %>%
-    arrange(series_label, datetime) %>%
-    group_by(series_label) %>%
+  df |>
+    arrange(series_label, datetime) |>
+    group_by(series_label) |>
     group_modify(~{
-      x <- .x %>%
-        arrange(datetime) %>%
+      x <- .x |>
+        arrange(datetime) |>
         mutate(
           precip_mm_clean = replace_na(precip_mm, 0),
           is_wet = precip_mm_clean > 0
@@ -420,12 +429,12 @@ make_event_cum_precip <- function(df, dry_gap_hours = 4) {
         }
       }
       
-      x %>%
+      x |>
         mutate(
           event_id = event_id,
           precip_event_cum_mm = cum_vals
         )
-    }) %>%
+    }) |>
     ungroup()
 }
 
@@ -437,15 +446,16 @@ make_event_cum_precip <- function(df, dry_gap_hours = 4) {
 # plot_bars_multi() renders a multi-series bar chart (overlapping, semi-transparent) for a given y column.
 # plot_soil_multi() renders multi-depth VWC line traces, one per selected depth.
 # plot_soil_temp_multi() renders multi-depth soil temperature line traces, one per selected depth.
+#
 # -----------------------------
 base_plot_cfg <- function(p) {
-  p %>% plotly::config(displaylogo = FALSE,
+  p |> plotly::config(displaylogo = FALSE,
                        modeBarButtonsToRemove = c("sendDataToCloud","toImage"))
 }
 
 plot_lines_multi <- function(df, y, title, ylab, source_id) {
   req(nrow(df) > 0, y %in% names(df))
-  p <- plotly::plot_ly(source = source_id) %>%
+  p <- plotly::plot_ly(source = source_id) |>
     plotly::layout(
       title  = list(text = title),
       xaxis  = list(title = "", rangeslider = list(visible = FALSE)),
@@ -455,7 +465,7 @@ plot_lines_multi <- function(df, y, title, ylab, source_id) {
       margin = list(l = 70, r = 20, b = 95, t = 60)
     )
   for (lab in unique(df$series_label)) {
-    sub <- df %>% filter(series_label == lab)
+    sub <- df |> filter(series_label == lab)
     p <- plotly::add_lines(
       p, data = sub, x = ~datetime, y = sub[[y]],
       name = lab, showlegend = TRUE
@@ -466,7 +476,7 @@ plot_lines_multi <- function(df, y, title, ylab, source_id) {
 
 plot_bars_multi <- function(df, y, title, ylab, source_id) {
   req(nrow(df) > 0, y %in% names(df))
-  p <- plotly::plot_ly(source = source_id) %>%
+  p <- plotly::plot_ly(source = source_id) |>
     plotly::layout(
       title   = list(text = title),
       xaxis   = list(title = "", rangeslider = list(visible = FALSE)),
@@ -477,7 +487,7 @@ plot_bars_multi <- function(df, y, title, ylab, source_id) {
       margin  = list(l = 70, r = 20, b = 95, t = 60)
     )
   for (lab in unique(df$series_label)) {
-    sub <- df %>% filter(series_label == lab)
+    sub <- df |> filter(series_label == lab)
     p <- plotly::add_bars(
       p, data = sub, x = ~datetime, y = sub[[y]],
       name = lab, opacity = 0.6, showlegend = TRUE
@@ -489,7 +499,7 @@ plot_bars_multi <- function(df, y, title, ylab, source_id) {
 plot_soil_multi <- function(df, depths_on = c("10","30","50"),
                             title = "Soil moisture (Typical)", source_id) {
   req(nrow(df) > 0)
-  p <- plotly::plot_ly(source = source_id) %>%
+  p <- plotly::plot_ly(source = source_id) |>
     plotly::layout(
       title  = list(text = title),
       xaxis  = list(title = "", rangeslider = list(visible = FALSE)),
@@ -499,7 +509,7 @@ plot_soil_multi <- function(df, depths_on = c("10","30","50"),
       margin = list(l = 70, r = 20, b = 95, t = 60)
     )
   for (lab in unique(df$series_label)) {
-    sub <- df %>% filter(series_label == lab)
+    sub <- df |> filter(series_label == lab)
     if ("10" %in% depths_on && "vwc_10" %in% names(sub))
       p <- plotly::add_lines(p, data = sub, x = ~datetime, y = ~vwc_10,
                              name = paste0(lab, " — 10 cm"), showlegend = TRUE)
@@ -516,7 +526,7 @@ plot_soil_multi <- function(df, depths_on = c("10","30","50"),
 plot_soil_temp_multi <- function(df, depths_on = c("10","30","50"),
                                  title = "Soil temperature", source_id) {
   req(nrow(df) > 0)
-  p <- plotly::plot_ly(source = source_id) %>%
+  p <- plotly::plot_ly(source = source_id) |>
     plotly::layout(
       title  = list(text = title),
       xaxis  = list(title = "", rangeslider = list(visible = FALSE)),
@@ -527,7 +537,7 @@ plot_soil_temp_multi <- function(df, depths_on = c("10","30","50"),
     )
   
   for (lab in unique(df$series_label)) {
-    sub <- df %>% filter(series_label == lab)
+    sub <- df |> filter(series_label == lab)
     if ("10" %in% depths_on && "soil_temp_10_c" %in% names(sub))
       p <- plotly::add_lines(p, data = sub, x = ~datetime, y = ~soil_temp_10_c,
                              name = paste0(lab, " — 10 cm"), showlegend = TRUE)
@@ -782,7 +792,7 @@ server <- function(input, output, session) {
   # Looks up the local file path for a given site type, key, and product.
   selected_path <- function(site_type, site_key, product) {
     idx <- file_index()
-    sub <- idx %>% filter(site_type == !!site_type,
+    sub <- idx |> filter(site_type == !!site_type,
                           site_key  == !!site_key,
                           product   == !!product)
     if (nrow(sub) > 0) return(sub$path[[1]])
@@ -904,7 +914,7 @@ server <- function(input, output, session) {
     start <- max(as.Date(input$date_range[1]), min_allowed)
     end   <- min(as.Date(input$date_range[2]), max_allowed)
     
-    df %>%
+    df |>
       filter(
         datetime >= as.POSIXct(start),
         datetime < as.POSIXct(end + 1)
@@ -941,7 +951,7 @@ server <- function(input, output, session) {
               is_syncing(TRUE)
               on.exit(is_syncing(FALSE), add = TRUE)
               for (other in setdiff(input$graphs_on, my_id)) {
-                plotly::plotlyProxy(paste0("plot_", other), session) %>%
+                plotly::plotlyProxy(paste0("plot_", other), session) |>
                   plotly::plotlyProxyInvoke("relayout", list(xaxis = list(range = xr)))
               }
             }
@@ -949,7 +959,7 @@ server <- function(input, output, session) {
               is_syncing(TRUE)
               on.exit(is_syncing(FALSE), add = TRUE)
               for (other in setdiff(input$graphs_on, my_id)) {
-                plotly::plotlyProxy(paste0("plot_", other), session) %>%
+                plotly::plotlyProxy(paste0("plot_", other), session) |>
                   plotly::plotlyProxyInvoke("relayout", list(xaxis = list(autorange = TRUE)))
               }
             }
@@ -1035,9 +1045,9 @@ server <- function(input, output, session) {
     req(!is.null(df), nrow(df) > 0)
     validate(need("wind_speed_avg" %in% names(df) && any(!is.na(df$wind_speed_avg)),
                   "No wind speed column found for Kineo."))
-    p <- plotly::plot_ly(source = "plot_wind_speed") %>%
-      plotly::add_lines(data = df, x = ~datetime, y = ~wind_speed_avg, name = "Avg wind speed", showlegend = TRUE) %>%
-      plotly::add_lines(data = df, x = ~datetime, y = ~wind_speed_max, name = "Max wind speed", showlegend = TRUE) %>%
+    p <- plotly::plot_ly(source = "plot_wind_speed") |>
+      plotly::add_lines(data = df, x = ~datetime, y = ~wind_speed_avg, name = "Avg wind speed", showlegend = TRUE) |>
+      plotly::add_lines(data = df, x = ~datetime, y = ~wind_speed_max, name = "Max wind speed", showlegend = TRUE) |>
       plotly::layout(
         title  = list(text = "Wind speed (Kineo Tower)"),
         xaxis  = list(title = "", rangeslider = list(visible = FALSE)),
@@ -1061,7 +1071,7 @@ server <- function(input, output, session) {
       type = "scatter", mode = "markers",
       name = "Kineo Tower", marker = list(size = 4),
       showlegend = TRUE
-    ) %>%
+    ) |>
       plotly::layout(
         title  = list(text = "Wind direction (Kineo Tower)"),
         xaxis  = list(title = "", rangeslider = list(visible = FALSE)),
