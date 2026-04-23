@@ -224,7 +224,7 @@ pick_first_existing <- function(df, candidates) {
 # -----------------------------
 # Standardization
 #
-# Processes data in the files
+# Based on the user selected inputs, this section selects the required columns for graphing.
 # -----------------------------
 standardize_dataset <- function(df, site_type, product, site_id = NA_character_) {
   out <- df |> select(datetime, everything())
@@ -445,6 +445,8 @@ make_event_cum_precip <- function(df, dry_gap_hours = 4) {
 # plot_bars_multi() renders a multi-series bar chart (overlapping, semi-transparent) for a given y column.
 # plot_soil_multi() renders multi-depth VWC line traces, one per selected depth.
 # plot_soil_temp_multi() renders multi-depth soil temperature line traces, one per selected depth.
+#
+# These helpers are general outlines of each type of plot, later used in the server to output plots.
 # -----------------------------
 base_plot_cfg <- function(p) {
   p |> plotly::config(displaylogo = FALSE,
@@ -570,7 +572,10 @@ ui <- fluidPage(
     }
   });
 ")),
-  
+
+# -----------------------------
+# Creates loading screen
+# -----------------------------
   tags$div(
     id = "startup_overlay",
     style = "position:fixed; top:0; left:0; width:100%; height:100%;
@@ -684,7 +689,9 @@ ui <- fluidPage(
     tags$div(class = "loading-subtext",
              "Downloading live data now!")
   ),
-  
+# -----------------------------
+# Theming and panels
+# -----------------------------
   theme = bs_theme(preset = "flatly"),
   titlePanel("Hubbard Brook Live Viewer"),
   
@@ -735,7 +742,11 @@ ui <- fluidPage(
         mainPanel(uiOutput("plots_ui"))
       )
     ),
-    
+# -----------------------------
+# Metadata panel
+#
+# Updates can be made here to describe watersheds, data collection methods, sensors, etc.
+# -----------------------------
     tabPanel(
       "Metadata",
       fluidRow(
@@ -770,8 +781,10 @@ ui <- fluidPage(
 # Server
 # -----------------------------
 server <- function(input, output, session) {
-  
-  # Stores and holds downloaded file paths
+
+# -----------------------------    
+# Stores and holds downloaded file paths
+# -----------------------------
   live_file_cache <- reactiveValues()
   file_index <- reactiveVal(empty_file_index())
   
@@ -787,8 +800,10 @@ server <- function(input, output, session) {
     
     file_index(idx)
   }
-  
-  # Looks up the local file path for a given site type, key, and product.
+
+# -----------------------------    
+# Looks up the local file path for a given site type, key, and product.
+# -----------------------------  
   selected_path <- function(site_type, site_key, product) {
     idx <- file_index()
     sub <- idx |> filter(site_type == !!site_type,
@@ -797,16 +812,20 @@ server <- function(input, output, session) {
     if (nrow(sub) > 0) return(sub$path[[1]])
     character(0)
   }
-  
-  # Extracts the numeric site ID from a site key string (ex. weir3 -> 3)
+ 
+# -----------------------------   
+# Extracts the numeric site ID from a site key string (ex. weir3 -> 3)
+# -----------------------------  
   site_id_from_key <- function(site_key) {
     if (is.na(site_key) || !nzchar(site_key) || site_key %in% c("kineo_tower", "southsnow", "southsoil", "snowcourse19_snow"))
       return(NA_character_)
     str_match(site_key, "^(weir|wxsta|snowcourse)(\\d+)$")[, 3]
   }
-  
-  # Reads, standardizes, and trims a single station file to plot-ready columns.
-  # Returns NULL if file is missing or unreadable
+ 
+# -----------------------------   
+# Reads, standardizes, and trims a single station file to plot-ready columns.
+# Returns NULL if file is missing or unreadable
+# -----------------------------  
   load_one <- function(site_type, site_key, product, label) {
     p <- selected_path(site_type, site_key, product)
     if (length(p) != 1 || is.na(p) || !file.exists(p)) return(NULL)
@@ -817,9 +836,11 @@ server <- function(input, output, session) {
     df$series_label <- label
     df
   }
-  
-  # Reactive that loads all station datasets at once into a named list. 
-  # Only reloads when refresh button is clicked.
+
+# -----------------------------    
+# Reactive that loads all station datasets at once into a named list. 
+# Only reloads when refresh button is clicked.
+# -----------------------------  
   all_data <- reactive({
     idx <- file_index()
     req(nrow(idx) > 0, any(!is.na(idx$path)))
@@ -838,8 +859,10 @@ server <- function(input, output, session) {
     )
   })
   
-  # Part of UI. Loading overlay (loading screen) is hidden after a delay to ensure all data has been downloaded
-  # and UI has rendered
+# -----------------------------  
+# Part of UI. Loading overlay (loading screen) is hidden after a delay to ensure all data has been downloaded
+# and UI has rendered
+# -----------------------------  
   observeEvent(TRUE, {
     refresh_index()
     later::later(function() {
@@ -854,8 +877,10 @@ server <- function(input, output, session) {
       session$sendCustomMessage("hideOverlay", list())
     }, delay = 0.5)
   })
-  
-  # Date range initialization
+
+# -----------------------------    
+# Date range initialization
+# -----------------------------  
   observe({
     max_date <- Sys.Date()
     min_date <- max_date - DEFAULT_LOOKBACK_DAYS
@@ -868,8 +893,10 @@ server <- function(input, output, session) {
       max = max_date
     )
   })
-  
-  # Groups datasets based on selected aspect
+
+# -----------------------------    
+# Groups datasets based on selected aspect
+# -----------------------------  
   datasets <- reactive({
     d <- all_data()
     
@@ -902,8 +929,10 @@ server <- function(input, output, session) {
       )
     }
   })
-  
-  # Filters dataset by the date range
+
+# -----------------------------    
+# Filters dataset by the date range
+# -----------------------------  
   filter_by_date <- function(df) {
     if (is.null(df) || nrow(df) == 0) return(df)
     req(input$date_range)
@@ -921,15 +950,19 @@ server <- function(input, output, session) {
       )
   }
   
-  # Renders plotly output per variable
+# -----------------------------  
+# Renders plotly output per variable
+# -----------------------------  
   output$plots_ui <- renderUI({
     req(input$graphs_on)
     tagList(lapply(input$graphs_on, function(id) {
       plotlyOutput(paste0("plot_", id), height = "320px")
     }))
   })
-  
-  # Synced zooming
+
+# -----------------------------    
+# Synced zooming
+# -----------------------------  
   observers <- reactiveValues()
   is_syncing <- reactiveVal(FALSE)
   
@@ -969,8 +1002,10 @@ server <- function(input, output, session) {
       })
     }
   }, ignoreInit = FALSE)
-  
-  # Plot rendering. Has an error message if data is missing using validate()
+
+# -----------------------------    
+# Plot rendering. Has an error message if data is missing using validate()
+# -----------------------------  
   output$plot_discharge <- renderPlotly({
     req("discharge" %in% input$graphs_on)
     df <- filter_by_date(datasets()$weir)
