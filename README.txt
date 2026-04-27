@@ -170,3 +170,8 @@ Important Notes
 install.packages(c("shiny", "tidyverse", "lubridate", "plotly", "httr", "readr", "shinycssloaders", "bslib", "thematic". "later"))
 shiny::runApp()
 ```
+
+## Created by
+Aum Patel
+Will Videll
+Rebecca Trinh
