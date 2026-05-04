@@ -253,7 +253,10 @@ standardize_dataset <- function(df, site_type, product, site_id = NA_character_)
   if (site_type == "wxsta" && product == "precip") {
     p_col <- pick_first_existing(out, c("ReportPCP","Precip","precip","Rain","rain"))
     out <- out |>
-      mutate(precip_mm = if (!is.na(p_col)) suppressWarnings(as.numeric(.data[[p_col]])) else NA_real_)
+      mutate(
+        precip_in = if (!is.na(p_col)) suppressWarnings(as.numeric(.data[[p_col]])) else NA_real_,
+        precip_mm = precip_in * 25.4
+      )
   }
   
   if (site_type == "wxsta" && product %in% c("air_temp_15min","air_temp")) {
